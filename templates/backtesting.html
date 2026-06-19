@@ -73,7 +73,64 @@ function safe(v,f="-"){return(v===null||v===undefined||v==="")?f:v;}
 function getPayload(){const raw=document.getElementById("symbolsInput").value.trim();const first=raw.split(",").map(x=>x.trim()).filter(Boolean)[0]||"";return{symbol:first,symbols:raw,timeframe:document.getElementById("timeframe").value,period:document.getElementById("period").value,strategy:document.getElementById("strategy").value,target_mode:document.getElementById("targetMode").value,capital:document.getElementById("capital").value,risk_mode:document.getElementById("riskMode").value,risk_value:document.getElementById("riskValue").value,min_score:document.getElementById("minScore").value,qty_mode:document.getElementById("qtyMode").value,manual_qty:document.getElementById("manualQty").value,lot_size:document.getElementById("lotSize").value,lots:document.getElementById("lots").value,max_hold_bars:document.getElementById("maxHoldBars").value,max_trades:document.getElementById("maxTrades").value};}
 function setStatus(t){document.getElementById("statusBox").innerText=t;}
 function setProgress(v){document.getElementById("progressBar").style.width=v+"%";}
-async function runSingleBacktest(){const payload=getPayload();if(!payload.symbol)return alert("Enter one symbol.");setStatus("Running backtest for "+payload.symbol+"...");setProgress(30);try{const res=await fetch("/api/backtest-stock",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const data=await res.json();setProgress(100);if(data.status!=="success"){setStatus("Error: "+data.message);alert(data.message||"Backtest failed");return;}lastResult=data;packResults=[data];renderSingleResult(data);setStatus("Backtest completed for "+data.symbol);document.getElementById("updatedAt").innerText="Updated: "+data.server_time;}catch(e){setStatus("Backtest error. Check Flask terminal.");}}
+async function runSingleBacktest() {
+    const payload = getPayload(true);
+
+    if (!payload.symbol) {
+        alert("Enter one symbol.");
+        return;
+    }
+
+    setStatus("Running backtest for " + payload.symbol + "...");
+    setProgress(20);
+
+    const controller = new AbortController();
+
+    const timer = setTimeout(() => {
+        controller.abort();
+    }, 45000);
+
+    try {
+        const res = await fetch("/api/backtest-stock", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload),
+            signal: controller.signal
+        });
+
+        clearTimeout(timer);
+
+        const data = await res.json();
+
+        setProgress(100);
+
+        if (data.status !== "success") {
+            setStatus("Error: " + data.message);
+            alert(data.message || "Backtest failed");
+            return;
+        }
+
+        lastResult = data;
+        packResults = [data];
+
+        renderSingleResult(data);
+        setStatus("Backtest completed for " + data.symbol);
+        document.getElementById("updatedAt").innerText = "Updated: " + data.server_time;
+
+    } catch (e) {
+        clearTimeout(timer);
+        setProgress(0);
+
+        if (e.name === "AbortError") {
+            setStatus("Backtest timed out. Use 15d period or 1D timeframe.");
+            alert("Backtest timed out. Test one stock only and use 15d period.");
+        } else {
+            setStatus("Backtest error. Check Render logs.");
+            alert("Backtest error. Check Render logs.");
+        }
+    }
+}
+
 async function runPackBacktest() {
     const payload = getPayload(false);
 
@@ -81,7 +138,7 @@ async function runPackBacktest() {
         .split(",")
         .map(x => x.trim().toUpperCase())
         .filter(Boolean)
-        .slice(0, 10);
+        .slice(0, 3);
 
     if (!symbols.length) {
         alert("Enter symbols.");
@@ -91,7 +148,7 @@ async function runPackBacktest() {
     packResults = [];
     const failed = [];
 
-    setStatus("Sequential pack backtest started. This avoids rate limit.");
+    setStatus("Safe pack backtest started. Max 3 stocks on Render free.");
     setProgress(0);
 
     for (let i = 0; i < symbols.length; i++) {
@@ -106,11 +163,20 @@ async function runPackBacktest() {
                 symbol: symbol
             };
 
+            const controller = new AbortController();
+
+            const timer = setTimeout(() => {
+                controller.abort();
+            }, 45000);
+
             const res = await fetch("/api/backtest-stock", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
-                body: JSON.stringify(onePayload)
+                body: JSON.stringify(onePayload),
+                signal: controller.signal
             });
+
+            clearTimeout(timer);
 
             const data = await res.json();
 
@@ -126,11 +192,11 @@ async function runPackBacktest() {
         } catch (e) {
             failed.push({
                 symbol: symbol,
-                message: "Request failed"
+                message: "Timed out or request failed"
             });
         }
 
-        await new Promise(resolve => setTimeout(resolve, 2200));
+        await new Promise(resolve => setTimeout(resolve, 3000));
     }
 
     setProgress(100);
@@ -156,7 +222,7 @@ async function runPackBacktest() {
             win_rate: winRate
         },
         ai_insight: packResults.length
-            ? `Sequential pack completed. Tested ${packResults.length} symbols. Net P&L ₹${netPnl.toFixed(2)}. Win rate ${winRate}%.`
+            ? `Safe pack completed. Tested ${packResults.length} symbols. Net P&L ₹${netPnl.toFixed(2)}. Win rate ${winRate}%.`
             : "No symbols completed successfully.",
         server_time: new Date().toLocaleTimeString()
     };

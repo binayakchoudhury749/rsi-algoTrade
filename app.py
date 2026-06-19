@@ -3861,7 +3861,7 @@ def bt_interval_to_yfinance(tf):
     return "15m"
 
 
-def bt_fetch_history(symbol, timeframe="15m", period="60d"):
+def bt_fetch_history(symbol, timeframe="15m", period="15d"):
     global BT_LAST_YF_CALL
 
     interval = bt_interval_to_yfinance(timeframe)
@@ -3874,92 +3874,93 @@ def bt_fetch_history(symbol, timeframe="15m", period="60d"):
 
     if cache_key in BT_DATA_CACHE:
         cached = BT_DATA_CACHE[cache_key]
-
         if now - cached["time"] <= BT_CACHE_TTL_SECONDS:
             return cached["df"].copy()
 
     wait_time = BT_MIN_YF_GAP_SECONDS - (now - BT_LAST_YF_CALL)
-
     if wait_time > 0:
         time.sleep(wait_time)
 
-    last_error = None
+    yahoo_symbol = f"{clean}.NS"
 
-    for yahoo_symbol in bt_yahoo_candidates(symbol):
-        try:
-            BT_LAST_YF_CALL = time.time()
+    try:
+        BT_LAST_YF_CALL = time.time()
 
-            df = yf.download(
-                tickers=yahoo_symbol,
-                period=yf_period,
-                interval=interval,
-                progress=False,
-                auto_adjust=False,
-                threads=False
-            )
+        df = yf.download(
+            tickers=yahoo_symbol,
+            period=yf_period,
+            interval=interval,
+            progress=False,
+            auto_adjust=False,
+            threads=False,
+            timeout=12
+        )
 
-            if df is None or df.empty:
-                continue
+        if df is None or df.empty:
+            raise Exception("No historical data found. Try 1D or shorter period.")
 
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = [col[0] for col in df.columns]
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [col[0] for col in df.columns]
 
-            df = df.reset_index()
+        df = df.reset_index()
 
-            rename_map = {}
+        rename_map = {}
 
-            for col in df.columns:
-                c = str(col).lower()
+        for col in df.columns:
+            c = str(col).lower()
 
-                if c in ["datetime", "date"]:
-                    rename_map[col] = "time"
-                elif c == "open":
-                    rename_map[col] = "open"
-                elif c == "high":
-                    rename_map[col] = "high"
-                elif c == "low":
-                    rename_map[col] = "low"
-                elif c == "close":
-                    rename_map[col] = "close"
-                elif c == "volume":
-                    rename_map[col] = "volume"
+            if c in ["datetime", "date"]:
+                rename_map[col] = "time"
+            elif c == "open":
+                rename_map[col] = "open"
+            elif c == "high":
+                rename_map[col] = "high"
+            elif c == "low":
+                rename_map[col] = "low"
+            elif c == "close":
+                rename_map[col] = "close"
+            elif c == "volume":
+                rename_map[col] = "volume"
 
-            df = df.rename(columns=rename_map)
+        df = df.rename(columns=rename_map)
 
-            needed = ["time", "open", "high", "low", "close", "volume"]
+        needed = ["time", "open", "high", "low", "close", "volume"]
 
-            for n in needed:
-                if n not in df.columns:
-                    df[n] = 0
+        for n in needed:
+            if n not in df.columns:
+                df[n] = 0
 
-            df = df[needed].dropna()
+        df = df[needed].dropna()
 
-            for col in ["open", "high", "low", "close", "volume"]:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-            df = df.dropna().reset_index(drop=True)
+        df = df.dropna().reset_index(drop=True)
 
-            if len(df) < 80:
-                raise Exception("Not enough candles. Try longer period or different timeframe.")
+        if len(df) < 60:
+            raise Exception("Not enough candles. Try 30d or 1D timeframe.")
 
-            df["symbol_used"] = yahoo_symbol
+        # Limit candles to reduce Render memory
+        if len(df) > 1200:
+            df = df.tail(1200).reset_index(drop=True)
 
-            BT_DATA_CACHE[cache_key] = {
-                "time": time.time(),
-                "df": df.copy()
-            }
+        df["symbol_used"] = yahoo_symbol
 
-            return df
+        BT_DATA_CACHE[cache_key] = {
+            "time": time.time(),
+            "df": df.copy()
+        }
 
-        except Exception as e:
-            last_error = str(e)
-            print("BT history error:", yahoo_symbol, e)
+        return df
 
-            if "rate" in str(e).lower() or "too many" in str(e).lower():
-                raise Exception("Yahoo/yfinance rate limited. Wait 1-2 minutes or reduce symbols.")
+    except Exception as e:
+        msg = str(e)
 
-    raise Exception(last_error or "No historical data found")
+        if "rate" in msg.lower() or "too many" in msg.lower():
+            raise Exception("Yahoo rate limited. Wait 2 minutes and test one stock only.")
 
+        raise Exception(msg)
+    
 def bt_add_indicators(df):
     df = df.copy()
 
