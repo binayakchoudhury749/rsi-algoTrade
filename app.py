@@ -15,6 +15,12 @@ from flask import Response
 from services.supabase_client import supabase
 from flask import request, jsonify, render_template, redirect, url_for, session
 from datetime import datetime
+import math
+
+try:
+    from services.supabase_client import supabase
+except Exception:
+    supabase = None
 
 
 def now_text():
@@ -3783,6 +3789,904 @@ def api_app_settings():
         }).execute()
 
     return jsonify({"status": "success", "message": "Settings saved"})
+
+@app.route("/backtesting")
+def backtesting_page():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+    return render_template("backtesting.html")
+
+
+def bt_now():
+    return datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
+
+
+def bt_float(value, default=0):
+    try:
+        if value is None or value == "":
+            return default
+        if isinstance(value, float) and math.isnan(value):
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def bt_int(value, default=0):
+    try:
+        if value is None or value == "":
+            return default
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def bt_clean_symbol(symbol):
+    return str(symbol or "").upper().replace(".NS", "").replace(".BO", "").strip()
+
+
+def bt_yahoo_candidates(symbol):
+    symbol = str(symbol or "").upper().strip()
+    if symbol.endswith(".NS") or symbol.endswith(".BO"):
+        return [symbol]
+    clean = bt_clean_symbol(symbol)
+    return [f"{clean}.NS", f"{clean}.BO", clean]
+
+
+def bt_period_to_yfinance(period):
+    allowed = {
+        "7d": "7d",
+        "15d": "15d",
+        "30d": "30d",
+        "60d": "60d",
+        "90d": "3mo",
+        "180d": "6mo",
+        "1y": "1y",
+    }
+    return allowed.get(period, "60d")
+
+
+def bt_interval_to_yfinance(tf):
+    if tf in ["5m", "15m", "30m", "60m", "1d"]:
+        return tf
+    return "15m"
+
+
+def bt_fetch_history(symbol, timeframe="15m", period="60d"):
+    interval = bt_interval_to_yfinance(timeframe)
+    yf_period = bt_period_to_yfinance(period)
+    last_error = None
+
+    for yahoo_symbol in bt_yahoo_candidates(symbol):
+        try:
+            ticker = yf.Ticker(yahoo_symbol)
+            df = ticker.history(period=yf_period, interval=interval, auto_adjust=False)
+
+            if df is None or df.empty:
+                continue
+
+            df = df.reset_index()
+
+            rename_map = {}
+            for col in df.columns:
+                c = str(col).lower()
+                if c in ["datetime", "date"]:
+                    rename_map[col] = "time"
+                elif c == "open":
+                    rename_map[col] = "open"
+                elif c == "high":
+                    rename_map[col] = "high"
+                elif c == "low":
+                    rename_map[col] = "low"
+                elif c == "close":
+                    rename_map[col] = "close"
+                elif c == "volume":
+                    rename_map[col] = "volume"
+
+            df = df.rename(columns=rename_map)
+
+            for col in ["time", "open", "high", "low", "close", "volume"]:
+                if col not in df.columns:
+                    df[col] = 0
+
+            df = df[["time", "open", "high", "low", "close", "volume"]].dropna()
+
+            for col in ["open", "high", "low", "close", "volume"]:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+            df = df.dropna().reset_index(drop=True)
+
+            if len(df) < 80:
+                continue
+
+            df["symbol_used"] = yahoo_symbol
+            return df
+
+        except Exception as e:
+            last_error = str(e)
+            print("BT history error:", yahoo_symbol, e)
+
+    raise Exception(last_error or "No historical data found")
+
+
+def bt_add_indicators(df):
+    df = df.copy()
+
+    close = df["close"]
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.ewm(alpha=1 / 14, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / 14, adjust=False).mean()
+
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    df["rsi"] = 100 - (100 / (1 + rs))
+    df["rsi"] = df["rsi"].fillna(50)
+
+    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
+    df["ema200"] = df["close"].ewm(span=200, adjust=False).mean()
+
+    df["prev_close"] = df["close"].shift(1)
+    tr1 = df["high"] - df["low"]
+    tr2 = (df["high"] - df["prev_close"]).abs()
+    tr3 = (df["low"] - df["prev_close"]).abs()
+    df["tr"] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    df["atr"] = df["tr"].rolling(14).mean().fillna(df["tr"].mean())
+
+    df["avg_volume20"] = df["volume"].rolling(20).mean()
+    df["relative_volume"] = df["volume"] / df["avg_volume20"].replace(0, np.nan)
+    df["relative_volume"] = df["relative_volume"].fillna(1)
+
+    return df
+
+
+def bt_find_swings(df, left=3, right=3):
+    lows = []
+    highs = []
+
+    for i in range(left, len(df) - right):
+        window_low = df["low"].iloc[i - left:i + right + 1]
+        window_high = df["high"].iloc[i - left:i + right + 1]
+
+        if df["low"].iloc[i] == window_low.min():
+            lows.append(i)
+
+        if df["high"].iloc[i] == window_high.max():
+            highs.append(i)
+
+    return lows, highs
+
+
+def bt_detect_signal(df, i, strategy="clean_engine"):
+    if i < 40:
+        return None
+
+    recent_df = df.iloc[:i + 1].copy()
+    lows, highs = bt_find_swings(recent_df)
+
+    close = bt_float(df["close"].iloc[i])
+    rsi = bt_float(df["rsi"].iloc[i])
+    ema20 = bt_float(df["ema20"].iloc[i])
+    ema50 = bt_float(df["ema50"].iloc[i])
+    relvol = bt_float(df["relative_volume"].iloc[i], 1)
+
+    bullish_trend = close > ema20 > ema50
+    bearish_trend = close < ema20 < ema50
+
+    signal = None
+
+    bullish_div = False
+    hidden_bullish = False
+    bearish_div = False
+    hidden_bearish = False
+
+    if len(lows) >= 2:
+        p1 = lows[-2]
+        p2 = lows[-1]
+
+        if p2 == i or abs(p2 - i) <= 3:
+            price1 = bt_float(df["low"].iloc[p1])
+            price2 = bt_float(df["low"].iloc[p2])
+            rsi1 = bt_float(df["rsi"].iloc[p1])
+            rsi2 = bt_float(df["rsi"].iloc[p2])
+
+            if price2 < price1 and rsi2 > rsi1:
+                bullish_div = True
+
+            if price2 > price1 and rsi2 < rsi1 and bullish_trend:
+                hidden_bullish = True
+
+    if len(highs) >= 2:
+        p1 = highs[-2]
+        p2 = highs[-1]
+
+        if p2 == i or abs(p2 - i) <= 3:
+            price1 = bt_float(df["high"].iloc[p1])
+            price2 = bt_float(df["high"].iloc[p2])
+            rsi1 = bt_float(df["rsi"].iloc[p1])
+            rsi2 = bt_float(df["rsi"].iloc[p2])
+
+            if price2 > price1 and rsi2 < rsi1:
+                bearish_div = True
+
+            if price2 < price1 and rsi2 > rsi1 and bearish_trend:
+                hidden_bearish = True
+
+    if strategy in ["clean_engine", "regular_bullish", "all_divergence"] and bullish_div:
+        score = 55
+        if rsi < 45:
+            score += 10
+        if relvol >= 1.2:
+            score += 10
+        if close > ema20:
+            score += 10
+
+        signal = {
+            "direction": "bullish",
+            "setup_type": "Regular Bullish Divergence",
+            "score": min(score, 95),
+            "reason": "Price made lower low while RSI made higher low",
+        }
+
+    if strategy in ["clean_engine", "hidden_bullish", "all_divergence"] and hidden_bullish:
+        score = 60
+        if bullish_trend:
+            score += 15
+        if rsi > 45:
+            score += 10
+        if relvol >= 1.2:
+            score += 10
+
+        signal = {
+            "direction": "bullish",
+            "setup_type": "Hidden Bullish Divergence",
+            "score": min(score, 95),
+            "reason": "Trend continuation bullish divergence",
+        }
+
+    if strategy in ["clean_engine", "regular_bearish", "all_divergence"] and bearish_div:
+        score = 55
+        if rsi > 55:
+            score += 10
+        if relvol >= 1.2:
+            score += 10
+        if close < ema20:
+            score += 10
+
+        signal = {
+            "direction": "bearish",
+            "setup_type": "Regular Bearish Divergence",
+            "score": min(score, 95),
+            "reason": "Price made higher high while RSI made lower high",
+        }
+
+    if strategy in ["clean_engine", "hidden_bearish", "all_divergence"] and hidden_bearish:
+        score = 60
+        if bearish_trend:
+            score += 15
+        if rsi < 55:
+            score += 10
+        if relvol >= 1.2:
+            score += 10
+
+        signal = {
+            "direction": "bearish",
+            "setup_type": "Hidden Bearish Divergence",
+            "score": min(score, 95),
+            "reason": "Trend continuation bearish divergence",
+        }
+
+    if strategy == "rsi_50_breakout":
+        prev_rsi = bt_float(df["rsi"].iloc[i - 1])
+
+        if prev_rsi < 50 and rsi >= 50 and close > ema20:
+            signal = {
+                "direction": "bullish",
+                "setup_type": "RSI 50 Bullish Breakout",
+                "score": 70 if relvol >= 1.2 else 60,
+                "reason": "RSI crossed above 50 with price above EMA20",
+            }
+
+        elif prev_rsi > 50 and rsi <= 50 and close < ema20:
+            signal = {
+                "direction": "bearish",
+                "setup_type": "RSI 50 Bearish Breakdown",
+                "score": 70 if relvol >= 1.2 else 60,
+                "reason": "RSI crossed below 50 with price below EMA20",
+            }
+
+    if strategy == "ema_rsi":
+        if close > ema20 > ema50 and rsi > 50 and relvol >= 1:
+            signal = {
+                "direction": "bullish",
+                "setup_type": "EMA + RSI Bullish",
+                "score": 65 + (10 if relvol >= 1.2 else 0),
+                "reason": "Price above EMA20/EMA50 and RSI above 50",
+            }
+
+        elif close < ema20 < ema50 and rsi < 50 and relvol >= 1:
+            signal = {
+                "direction": "bearish",
+                "setup_type": "EMA + RSI Bearish",
+                "score": 65 + (10 if relvol >= 1.2 else 0),
+                "reason": "Price below EMA20/EMA50 and RSI below 50",
+            }
+
+    return signal
+
+
+def bt_build_trade_plan(df, i, direction, capital, risk_amount, qty_mode, manual_qty, lot_size, lots):
+    current = df.iloc[i]
+
+    atr = bt_float(current.get("atr"))
+    price = bt_float(current.get("close"))
+    buffer = max(atr * 0.15, price * 0.001)
+
+    recent = df.iloc[max(0, i - 14):i + 1]
+    recent_high = bt_float(recent["high"].max())
+    recent_low = bt_float(recent["low"].min())
+
+    if direction == "bullish":
+        entry = bt_float(current["high"]) + buffer
+        stop_loss = recent_low - buffer
+
+        if stop_loss >= entry:
+            stop_loss = entry - max(atr, entry * 0.01)
+
+        risk_per_share = abs(entry - stop_loss)
+        target_1 = entry + risk_per_share * 1.5
+        target_2 = entry + risk_per_share * 2.5
+
+    elif direction == "bearish":
+        entry = bt_float(current["low"]) - buffer
+        stop_loss = recent_high + buffer
+
+        if stop_loss <= entry:
+            stop_loss = entry + max(atr, entry * 0.01)
+
+        risk_per_share = abs(stop_loss - entry)
+        target_1 = entry - risk_per_share * 1.5
+        target_2 = entry - risk_per_share * 2.5
+
+    else:
+        return None
+
+    if risk_per_share <= 0:
+        return None
+
+    if qty_mode == "manual":
+        qty = max(0, bt_int(manual_qty))
+        qty_source = "Manual Shares"
+    elif qty_mode == "lots":
+        qty = max(0, bt_int(lots, 1) * bt_int(lot_size, 1))
+        qty_source = f"{lots} lot x {lot_size}"
+    else:
+        qty_by_risk = int(risk_amount / risk_per_share)
+        qty_by_capital = int(capital / entry) if entry else 0
+        qty = max(0, min(qty_by_risk, qty_by_capital))
+        qty_source = "Auto Risk Based"
+
+    if qty <= 0:
+        return None
+
+    return {
+        "entry": round(entry, 2),
+        "stop_loss": round(stop_loss, 2),
+        "target_1": round(target_1, 2),
+        "target_2": round(target_2, 2),
+        "risk_per_share": round(risk_per_share, 2),
+        "quantity": qty,
+        "qty_source": qty_source,
+        "capital_used": round(entry * qty, 2),
+        "max_loss": round(risk_per_share * qty, 2),
+    }
+
+
+def bt_simulate_trade(df, signal_index, signal, plan, max_hold_bars=40, target_mode="target_2"):
+    direction = signal["direction"]
+
+    entry = bt_float(plan["entry"])
+    sl = bt_float(plan["stop_loss"])
+    t1 = bt_float(plan["target_1"])
+    t2 = bt_float(plan["target_2"])
+    qty = bt_int(plan["quantity"])
+
+    entry_index = None
+    entry_time = None
+
+    for j in range(signal_index + 1, min(signal_index + 8, len(df))):
+        high = bt_float(df["high"].iloc[j])
+        low = bt_float(df["low"].iloc[j])
+
+        if direction == "bullish" and high >= entry:
+            entry_index = j
+            entry_time = str(df["time"].iloc[j])
+            break
+
+        if direction == "bearish" and low <= entry:
+            entry_index = j
+            entry_time = str(df["time"].iloc[j])
+            break
+
+    if entry_index is None:
+        return None
+
+    end_index = min(entry_index + max_hold_bars, len(df) - 1)
+
+    result = "EXPIRED"
+    exit_price = bt_float(df["close"].iloc[end_index])
+    exit_time = str(df["time"].iloc[end_index])
+    hit_t1 = False
+    hit_t2 = False
+    hit_sl = False
+
+    for j in range(entry_index, end_index + 1):
+        high = bt_float(df["high"].iloc[j])
+        low = bt_float(df["low"].iloc[j])
+
+        if direction == "bullish":
+            # Conservative: if both SL and target in same candle, SL is counted first.
+            if low <= sl:
+                result = "SL HIT"
+                exit_price = sl
+                exit_time = str(df["time"].iloc[j])
+                hit_sl = True
+                break
+
+            if high >= t2:
+                result = "TARGET 2 HIT"
+                exit_price = t2
+                exit_time = str(df["time"].iloc[j])
+                hit_t1 = True
+                hit_t2 = True
+                break
+
+            if high >= t1:
+                hit_t1 = True
+                if target_mode == "target_1":
+                    result = "TARGET 1 HIT"
+                    exit_price = t1
+                    exit_time = str(df["time"].iloc[j])
+                    break
+
+        if direction == "bearish":
+            if high >= sl:
+                result = "SL HIT"
+                exit_price = sl
+                exit_time = str(df["time"].iloc[j])
+                hit_sl = True
+                break
+
+            if low <= t2:
+                result = "TARGET 2 HIT"
+                exit_price = t2
+                exit_time = str(df["time"].iloc[j])
+                hit_t1 = True
+                hit_t2 = True
+                break
+
+            if low <= t1:
+                hit_t1 = True
+                if target_mode == "target_1":
+                    result = "TARGET 1 HIT"
+                    exit_price = t1
+                    exit_time = str(df["time"].iloc[j])
+                    break
+
+    if direction == "bullish":
+        pnl = round((exit_price - entry) * qty, 2)
+    else:
+        pnl = round((entry - exit_price) * qty, 2)
+
+    if pnl > 0:
+        trade_result = "WIN"
+    elif pnl < 0:
+        trade_result = "LOSS"
+    else:
+        trade_result = "BREAKEVEN"
+
+    r_multiple = round(pnl / bt_float(plan["max_loss"], 1), 2) if plan["max_loss"] else 0
+
+    return {
+        "signal_time": str(df["time"].iloc[signal_index]),
+        "entry_time": entry_time,
+        "exit_time": exit_time,
+        "direction": direction,
+        "setup_type": signal["setup_type"],
+        "reason": signal["reason"],
+        "score": signal["score"],
+        "entry": entry,
+        "stop_loss": sl,
+        "target_1": t1,
+        "target_2": t2,
+        "exit_price": round(exit_price, 2),
+        "quantity": qty,
+        "capital_used": plan["capital_used"],
+        "max_loss": plan["max_loss"],
+        "risk_per_share": plan["risk_per_share"],
+        "result": trade_result,
+        "exit_reason": result,
+        "pnl": pnl,
+        "r_multiple": r_multiple,
+        "hit_t1": hit_t1,
+        "hit_t2": hit_t2,
+        "hit_sl": hit_sl,
+    }
+
+
+def bt_build_summary(trades, capital):
+    total = len(trades)
+
+    wins = [x for x in trades if x["pnl"] > 0]
+    losses = [x for x in trades if x["pnl"] < 0]
+    breakeven = [x for x in trades if x["pnl"] == 0]
+
+    net_pnl = round(sum(x["pnl"] for x in trades), 2)
+    gross_profit = round(sum(x["pnl"] for x in wins), 2)
+    gross_loss = round(sum(x["pnl"] for x in losses), 2)
+
+    win_rate = round((len(wins) / total) * 100, 2) if total else 0
+    loss_rate = round((len(losses) / total) * 100, 2) if total else 0
+
+    profit_factor = round(gross_profit / abs(gross_loss), 2) if gross_loss else (gross_profit if gross_profit else 0)
+
+    avg_win = round(gross_profit / len(wins), 2) if wins else 0
+    avg_loss = round(gross_loss / len(losses), 2) if losses else 0
+
+    equity = []
+    running = capital
+    peak = capital
+    max_drawdown = 0
+
+    for i, t in enumerate(trades):
+        running += t["pnl"]
+        peak = max(peak, running)
+        dd = peak - running
+        max_drawdown = max(max_drawdown, dd)
+        equity.append({
+            "index": i + 1,
+            "equity": round(running, 2),
+            "pnl": t["pnl"],
+        })
+
+    roi_percent = round((net_pnl / capital) * 100, 2) if capital else 0
+
+    target1_hits = len([x for x in trades if x.get("hit_t1")])
+    target2_hits = len([x for x in trades if x.get("hit_t2")])
+    sl_hits = len([x for x in trades if x.get("hit_sl")])
+
+    best_trade = max(trades, key=lambda x: x["pnl"]) if trades else None
+    worst_trade = min(trades, key=lambda x: x["pnl"]) if trades else None
+
+    if total < 3:
+        ai_grade = "Need More Data"
+    elif win_rate >= 60 and profit_factor >= 1.5:
+        ai_grade = "A - Strong Strategy"
+    elif win_rate >= 50 and profit_factor >= 1.2:
+        ai_grade = "B - Good Strategy"
+    elif win_rate >= 40:
+        ai_grade = "C - Risky Strategy"
+    else:
+        ai_grade = "D - Avoid / Improve"
+
+    if total == 0:
+        ai_insight = "No valid historical trades found. Try a longer period, different timeframe, or another strategy."
+    elif ai_grade.startswith("A"):
+        ai_insight = "Backtest is strong on historical data. Continue testing with paper trades before real use."
+    elif ai_grade.startswith("B"):
+        ai_insight = "Strategy has potential, but needs strict stop-loss and paper validation."
+    elif ai_grade.startswith("C"):
+        ai_insight = "Strategy is risky. Use only high score setups and avoid low volume signals."
+    else:
+        ai_insight = "Strategy failed on this test. Avoid using this setting until improved."
+
+    return {
+        "total_trades": total,
+        "wins": len(wins),
+        "losses": len(losses),
+        "breakeven": len(breakeven),
+        "win_rate": win_rate,
+        "loss_rate": loss_rate,
+        "net_pnl": net_pnl,
+        "gross_profit": gross_profit,
+        "gross_loss": gross_loss,
+        "profit_factor": profit_factor,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "max_drawdown": round(max_drawdown, 2),
+        "roi_percent": roi_percent,
+        "target1_hits": target1_hits,
+        "target2_hits": target2_hits,
+        "sl_hits": sl_hits,
+        "target1_hit_rate": round((target1_hits / total) * 100, 2) if total else 0,
+        "target2_hit_rate": round((target2_hits / total) * 100, 2) if total else 0,
+        "sl_hit_rate": round((sl_hits / total) * 100, 2) if total else 0,
+        "best_trade": best_trade,
+        "worst_trade": worst_trade,
+        "equity_curve": equity,
+        "ai_grade": ai_grade,
+        "ai_insight": ai_insight,
+    }
+
+
+def bt_run_backtest_for_symbol(
+    symbol,
+    timeframe="15m",
+    period="60d",
+    strategy="clean_engine",
+    capital=10000,
+    risk_value=500,
+    risk_mode="amount",
+    qty_mode="auto",
+    manual_qty=0,
+    lot_size=1,
+    lots=1,
+    max_hold_bars=40,
+    target_mode="target_2",
+    min_score=50,
+    max_trades=80,
+):
+    capital = bt_float(capital, 10000)
+    risk_value = bt_float(risk_value, 500)
+    risk_amount = capital * (risk_value / 100) if risk_mode == "percent" else risk_value
+
+    df = bt_fetch_history(symbol, timeframe, period)
+    df = bt_add_indicators(df)
+
+    clean_symbol = bt_clean_symbol(symbol)
+    yahoo_symbol = str(df["symbol_used"].iloc[0]) if "symbol_used" in df.columns else clean_symbol
+
+    trades = []
+    used_until_index = 0
+
+    for i in range(50, len(df) - 10):
+        if i <= used_until_index:
+            continue
+
+        signal = bt_detect_signal(df, i, strategy=strategy)
+
+        if not signal:
+            continue
+
+        if bt_float(signal["score"]) < bt_float(min_score):
+            continue
+
+        plan = bt_build_trade_plan(
+            df=df,
+            i=i,
+            direction=signal["direction"],
+            capital=capital,
+            risk_amount=risk_amount,
+            qty_mode=qty_mode,
+            manual_qty=manual_qty,
+            lot_size=lot_size,
+            lots=lots,
+        )
+
+        if not plan:
+            continue
+
+        trade = bt_simulate_trade(
+            df=df,
+            signal_index=i,
+            signal=signal,
+            plan=plan,
+            max_hold_bars=bt_int(max_hold_bars, 40),
+            target_mode=target_mode,
+        )
+
+        if not trade:
+            continue
+
+        trade["symbol"] = clean_symbol
+        trade["timeframe"] = timeframe
+        trade["strategy"] = strategy
+
+        trades.append(trade)
+
+        exit_time = trade.get("exit_time")
+        try:
+            exit_matches = df.index[df["time"].astype(str) == str(exit_time)].tolist()
+            if exit_matches:
+                used_until_index = exit_matches[0]
+        except Exception:
+            used_until_index = i + 10
+
+        if len(trades) >= bt_int(max_trades, 80):
+            break
+
+    summary = bt_build_summary(trades, capital)
+
+    return {
+        "symbol": clean_symbol,
+        "backend_symbol": yahoo_symbol,
+        "timeframe": timeframe,
+        "period": period,
+        "strategy": strategy,
+        "capital": capital,
+        "risk_amount": round(risk_amount, 2),
+        "qty_mode": qty_mode,
+        "lot_size": bt_int(lot_size, 1),
+        "lots": bt_int(lots, 1),
+        "total_candles": len(df),
+        "trades": trades,
+        "summary": summary,
+        "server_time": bt_now(),
+    }
+
+
+def bt_save_result_to_supabase(result):
+    if supabase is None:
+        return
+
+    try:
+        row = {
+            "symbol": result.get("symbol"),
+            "timeframe": result.get("timeframe"),
+            "period": result.get("period"),
+            "strategy": result.get("strategy"),
+            "capital": result.get("capital"),
+            "risk_amount": result.get("risk_amount"),
+            "total_trades": result.get("summary", {}).get("total_trades"),
+            "win_rate": result.get("summary", {}).get("win_rate"),
+            "net_pnl": result.get("summary", {}).get("net_pnl"),
+            "profit_factor": result.get("summary", {}).get("profit_factor"),
+            "max_drawdown": result.get("summary", {}).get("max_drawdown"),
+            "ai_grade": result.get("summary", {}).get("ai_grade"),
+            "raw_data": result,
+        }
+
+        supabase.table("backtest_results").insert(row).execute()
+
+    except Exception as e:
+        print("Backtest save skipped:", e)
+
+
+@app.route("/api/backtest-stock", methods=["POST"])
+def api_backtest_stock():
+    if not session.get("logged_in"):
+        return jsonify({"status": "error", "message": "Not logged in."})
+
+    data = request.get_json(silent=True) or {}
+    symbol = bt_clean_symbol(data.get("symbol"))
+
+    if not symbol:
+        return jsonify({"status": "error", "message": "Symbol required."})
+
+    try:
+        result = bt_run_backtest_for_symbol(
+            symbol=symbol,
+            timeframe=data.get("timeframe", "15m"),
+            period=data.get("period", "60d"),
+            strategy=data.get("strategy", "clean_engine"),
+            capital=data.get("capital", 10000),
+            risk_value=data.get("risk_value", 500),
+            risk_mode=data.get("risk_mode", "amount"),
+            qty_mode=data.get("qty_mode", "auto"),
+            manual_qty=data.get("manual_qty", 0),
+            lot_size=data.get("lot_size", 1),
+            lots=data.get("lots", 1),
+            max_hold_bars=data.get("max_hold_bars", 40),
+            target_mode=data.get("target_mode", "target_2"),
+            min_score=data.get("min_score", 50),
+            max_trades=data.get("max_trades", 80),
+        )
+
+        bt_save_result_to_supabase(result)
+        result["status"] = "success"
+        return jsonify(result)
+
+    except Exception as e:
+        print("Backtest stock error:", e)
+        return jsonify({"status": "error", "message": str(e)})
+
+
+@app.route("/api/backtest-pack", methods=["POST"])
+def api_backtest_pack():
+    if not session.get("logged_in"):
+        return jsonify({"status": "error", "message": "Not logged in."})
+
+    data = request.get_json(silent=True) or {}
+    symbols_raw = data.get("symbols", "")
+    symbols = [bt_clean_symbol(x) for x in str(symbols_raw).split(",") if bt_clean_symbol(x)]
+    symbols = symbols[:20]
+
+    if not symbols:
+        return jsonify({"status": "error", "message": "Enter at least one symbol."})
+
+    results = []
+    failed = []
+
+    for symbol in symbols:
+        try:
+            result = bt_run_backtest_for_symbol(
+                symbol=symbol,
+                timeframe=data.get("timeframe", "15m"),
+                period=data.get("period", "60d"),
+                strategy=data.get("strategy", "clean_engine"),
+                capital=data.get("capital", 10000),
+                risk_value=data.get("risk_value", 500),
+                risk_mode=data.get("risk_mode", "amount"),
+                qty_mode=data.get("qty_mode", "auto"),
+                manual_qty=data.get("manual_qty", 0),
+                lot_size=data.get("lot_size", 1),
+                lots=data.get("lots", 1),
+                max_hold_bars=data.get("max_hold_bars", 40),
+                target_mode=data.get("target_mode", "target_2"),
+                min_score=data.get("min_score", 50),
+                max_trades=data.get("max_trades", 80),
+            )
+
+            bt_save_result_to_supabase(result)
+            results.append(result)
+
+        except Exception as e:
+            failed.append({"symbol": symbol, "message": str(e)})
+
+    total_trades = sum(x["summary"]["total_trades"] for x in results)
+    net_pnl = round(sum(x["summary"]["net_pnl"] for x in results), 2)
+    wins = sum(x["summary"]["wins"] for x in results)
+    losses = sum(x["summary"]["losses"] for x in results)
+    closed = wins + losses
+    win_rate = round((wins / closed) * 100, 2) if closed else 0
+
+    ranked = sorted(results, key=lambda x: x["summary"]["net_pnl"], reverse=True)
+
+    if results:
+        best = ranked[0]
+        worst = ranked[-1]
+        ai_insight = (
+            f"Best backtest: {best['symbol']} with ₹{best['summary']['net_pnl']} net P&L. "
+            f"Weakest: {worst['symbol']} with ₹{worst['summary']['net_pnl']} net P&L. "
+            f"Overall win rate: {win_rate}%."
+        )
+    else:
+        ai_insight = "No valid backtest result found."
+
+    return jsonify({
+        "status": "success",
+        "results": results,
+        "failed": failed,
+        "summary": {
+            "symbols_tested": len(results),
+            "failed": len(failed),
+            "total_trades": total_trades,
+            "net_pnl": net_pnl,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": win_rate,
+        },
+        "ai_insight": ai_insight,
+        "server_time": bt_now(),
+    })
+
+
+@app.route("/api/backtest-history")
+def api_backtest_history():
+    if not session.get("logged_in"):
+        return jsonify({"status": "error", "message": "Not logged in."})
+
+    if supabase is None:
+        return jsonify({"status": "success", "history": []})
+
+    try:
+        data = (
+            supabase
+            .table("backtest_results")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(100)
+            .execute()
+        )
+
+        return jsonify({"status": "success", "history": data.data or []})
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+
 
 if __name__ == "__main__":
     import os
