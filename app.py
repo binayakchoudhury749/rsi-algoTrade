@@ -16,6 +16,12 @@ from services.supabase_client import supabase
 from flask import request, jsonify, render_template, redirect, url_for, session
 from datetime import datetime
 import math
+import time
+
+BT_DATA_CACHE = {}
+BT_CACHE_TTL_SECONDS = 600
+BT_LAST_YF_CALL = 0
+BT_MIN_YF_GAP_SECONDS = 1.5
 
 try:
     from services.supabase_client import supabase
@@ -3827,11 +3833,14 @@ def bt_clean_symbol(symbol):
 
 def bt_yahoo_candidates(symbol):
     symbol = str(symbol or "").upper().strip()
+
     if symbol.endswith(".NS") or symbol.endswith(".BO"):
         return [symbol]
-    clean = bt_clean_symbol(symbol)
-    return [f"{clean}.NS", f"{clean}.BO", clean]
 
+    clean = bt_clean_symbol(symbol)
+
+    # Keep only NSE first to reduce Yahoo requests and avoid rate limit.
+    return [f"{clean}.NS"]
 
 def bt_period_to_yfinance(period):
     allowed = {
@@ -3853,23 +3862,55 @@ def bt_interval_to_yfinance(tf):
 
 
 def bt_fetch_history(symbol, timeframe="15m", period="60d"):
+    global BT_LAST_YF_CALL
+
     interval = bt_interval_to_yfinance(timeframe)
     yf_period = bt_period_to_yfinance(period)
+
+    clean = bt_clean_symbol(symbol)
+    cache_key = f"{clean}_{interval}_{yf_period}"
+
+    now = time.time()
+
+    if cache_key in BT_DATA_CACHE:
+        cached = BT_DATA_CACHE[cache_key]
+
+        if now - cached["time"] <= BT_CACHE_TTL_SECONDS:
+            return cached["df"].copy()
+
+    wait_time = BT_MIN_YF_GAP_SECONDS - (now - BT_LAST_YF_CALL)
+
+    if wait_time > 0:
+        time.sleep(wait_time)
+
     last_error = None
 
     for yahoo_symbol in bt_yahoo_candidates(symbol):
         try:
-            ticker = yf.Ticker(yahoo_symbol)
-            df = ticker.history(period=yf_period, interval=interval, auto_adjust=False)
+            BT_LAST_YF_CALL = time.time()
+
+            df = yf.download(
+                tickers=yahoo_symbol,
+                period=yf_period,
+                interval=interval,
+                progress=False,
+                auto_adjust=False,
+                threads=False
+            )
 
             if df is None or df.empty:
                 continue
 
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = [col[0] for col in df.columns]
+
             df = df.reset_index()
 
             rename_map = {}
+
             for col in df.columns:
                 c = str(col).lower()
+
                 if c in ["datetime", "date"]:
                     rename_map[col] = "time"
                 elif c == "open":
@@ -3885,11 +3926,13 @@ def bt_fetch_history(symbol, timeframe="15m", period="60d"):
 
             df = df.rename(columns=rename_map)
 
-            for col in ["time", "open", "high", "low", "close", "volume"]:
-                if col not in df.columns:
-                    df[col] = 0
+            needed = ["time", "open", "high", "low", "close", "volume"]
 
-            df = df[["time", "open", "high", "low", "close", "volume"]].dropna()
+            for n in needed:
+                if n not in df.columns:
+                    df[n] = 0
+
+            df = df[needed].dropna()
 
             for col in ["open", "high", "low", "close", "volume"]:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -3897,17 +3940,25 @@ def bt_fetch_history(symbol, timeframe="15m", period="60d"):
             df = df.dropna().reset_index(drop=True)
 
             if len(df) < 80:
-                continue
+                raise Exception("Not enough candles. Try longer period or different timeframe.")
 
             df["symbol_used"] = yahoo_symbol
+
+            BT_DATA_CACHE[cache_key] = {
+                "time": time.time(),
+                "df": df.copy()
+            }
+
             return df
 
         except Exception as e:
             last_error = str(e)
             print("BT history error:", yahoo_symbol, e)
 
-    raise Exception(last_error or "No historical data found")
+            if "rate" in str(e).lower() or "too many" in str(e).lower():
+                raise Exception("Yahoo/yfinance rate limited. Wait 1-2 minutes or reduce symbols.")
 
+    raise Exception(last_error or "No historical data found")
 
 def bt_add_indicators(df):
     df = df.copy()
@@ -4193,86 +4244,148 @@ def bt_simulate_trade(df, signal_index, signal, plan, max_hold_bars=40, target_m
     t2 = bt_float(plan["target_2"])
     qty = bt_int(plan["quantity"])
 
+    signal_row = df.iloc[signal_index]
+
     entry_index = None
     entry_time = None
+    entry_candle_ohlc = None
+    entry_rule = ""
 
     for j in range(signal_index + 1, min(signal_index + 8, len(df))):
-        high = bt_float(df["high"].iloc[j])
-        low = bt_float(df["low"].iloc[j])
+        row = df.iloc[j]
+
+        high = bt_float(row["high"])
+        low = bt_float(row["low"])
 
         if direction == "bullish" and high >= entry:
             entry_index = j
-            entry_time = str(df["time"].iloc[j])
+            entry_time = str(row["time"])
+            entry_candle_ohlc = {
+                "open": round(bt_float(row["open"]), 2),
+                "high": round(high, 2),
+                "low": round(low, 2),
+                "close": round(bt_float(row["close"]), 2)
+            }
+            entry_rule = f"Buy triggered because candle high ₹{round(high, 2)} crossed entry ₹{entry}"
             break
 
         if direction == "bearish" and low <= entry:
             entry_index = j
-            entry_time = str(df["time"].iloc[j])
+            entry_time = str(row["time"])
+            entry_candle_ohlc = {
+                "open": round(bt_float(row["open"]), 2),
+                "high": round(high, 2),
+                "low": round(low, 2),
+                "close": round(bt_float(row["close"]), 2)
+            }
+            entry_rule = f"Sell triggered because candle low ₹{round(low, 2)} crossed entry ₹{entry}"
             break
 
     if entry_index is None:
         return None
 
-    end_index = min(entry_index + max_hold_bars, len(df) - 1)
+    end_index = min(entry_index + bt_int(max_hold_bars, 40), len(df) - 1)
 
-    result = "EXPIRED"
+    result = "TIME EXIT"
     exit_price = bt_float(df["close"].iloc[end_index])
     exit_time = str(df["time"].iloc[end_index])
+    exit_candle_ohlc = {
+        "open": round(bt_float(df["open"].iloc[end_index]), 2),
+        "high": round(bt_float(df["high"].iloc[end_index]), 2),
+        "low": round(bt_float(df["low"].iloc[end_index]), 2),
+        "close": round(bt_float(df["close"].iloc[end_index]), 2)
+    }
+
+    exit_rule = f"Time exit after {max_hold_bars} candles at close ₹{round(exit_price, 2)}"
+    execution_quality = "Historical candle simulation"
     hit_t1 = False
     hit_t2 = False
     hit_sl = False
 
     for j in range(entry_index, end_index + 1):
-        high = bt_float(df["high"].iloc[j])
-        low = bt_float(df["low"].iloc[j])
+        row = df.iloc[j]
+
+        high = bt_float(row["high"])
+        low = bt_float(row["low"])
+
+        candle = {
+            "open": round(bt_float(row["open"]), 2),
+            "high": round(high, 2),
+            "low": round(low, 2),
+            "close": round(bt_float(row["close"]), 2)
+        }
 
         if direction == "bullish":
-            # Conservative: if both SL and target in same candle, SL is counted first.
-            if low <= sl:
+            sl_hit = low <= sl
+            t1_hit = high >= t1
+            t2_hit = high >= t2
+
+            # Conservative rule: if both SL and target are inside same candle, count SL first.
+            if sl_hit:
                 result = "SL HIT"
                 exit_price = sl
-                exit_time = str(df["time"].iloc[j])
+                exit_time = str(row["time"])
+                exit_candle_ohlc = candle
+                exit_rule = f"SL hit because candle low ₹{round(low, 2)} touched SL ₹{sl}"
+                execution_quality = "Conservative SL-first rule"
                 hit_sl = True
                 break
 
-            if high >= t2:
+            if t2_hit:
                 result = "TARGET 2 HIT"
                 exit_price = t2
-                exit_time = str(df["time"].iloc[j])
+                exit_time = str(row["time"])
+                exit_candle_ohlc = candle
+                exit_rule = f"Target 2 hit because candle high ₹{round(high, 2)} touched T2 ₹{t2}"
                 hit_t1 = True
                 hit_t2 = True
                 break
 
-            if high >= t1:
+            if t1_hit:
                 hit_t1 = True
+
                 if target_mode == "target_1":
                     result = "TARGET 1 HIT"
                     exit_price = t1
-                    exit_time = str(df["time"].iloc[j])
+                    exit_time = str(row["time"])
+                    exit_candle_ohlc = candle
+                    exit_rule = f"Target 1 hit because candle high ₹{round(high, 2)} touched T1 ₹{t1}"
                     break
 
-        if direction == "bearish":
-            if high >= sl:
+        elif direction == "bearish":
+            sl_hit = high >= sl
+            t1_hit = low <= t1
+            t2_hit = low <= t2
+
+            if sl_hit:
                 result = "SL HIT"
                 exit_price = sl
-                exit_time = str(df["time"].iloc[j])
+                exit_time = str(row["time"])
+                exit_candle_ohlc = candle
+                exit_rule = f"SL hit because candle high ₹{round(high, 2)} touched SL ₹{sl}"
+                execution_quality = "Conservative SL-first rule"
                 hit_sl = True
                 break
 
-            if low <= t2:
+            if t2_hit:
                 result = "TARGET 2 HIT"
                 exit_price = t2
-                exit_time = str(df["time"].iloc[j])
+                exit_time = str(row["time"])
+                exit_candle_ohlc = candle
+                exit_rule = f"Target 2 hit because candle low ₹{round(low, 2)} touched T2 ₹{t2}"
                 hit_t1 = True
                 hit_t2 = True
                 break
 
-            if low <= t1:
+            if t1_hit:
                 hit_t1 = True
+
                 if target_mode == "target_1":
                     result = "TARGET 1 HIT"
                     exit_price = t1
-                    exit_time = str(df["time"].iloc[j])
+                    exit_time = str(row["time"])
+                    exit_candle_ohlc = candle
+                    exit_rule = f"Target 1 hit because candle low ₹{round(low, 2)} touched T1 ₹{t1}"
                     break
 
     if direction == "bullish":
@@ -4290,31 +4403,44 @@ def bt_simulate_trade(df, signal_index, signal, plan, max_hold_bars=40, target_m
     r_multiple = round(pnl / bt_float(plan["max_loss"], 1), 2) if plan["max_loss"] else 0
 
     return {
-        "signal_time": str(df["time"].iloc[signal_index]),
+        "signal_time": str(signal_row["time"]),
+        "signal_close": round(bt_float(signal_row["close"]), 2),
+        "signal_rsi": round(bt_float(signal_row.get("rsi")), 2),
+
         "entry_time": entry_time,
+        "entry_rule": entry_rule,
+        "entry_candle_ohlc": entry_candle_ohlc,
+
         "exit_time": exit_time,
+        "exit_rule": exit_rule,
+        "exit_candle_ohlc": exit_candle_ohlc,
+        "execution_quality": execution_quality,
+
         "direction": direction,
         "setup_type": signal["setup_type"],
         "reason": signal["reason"],
         "score": signal["score"],
+
         "entry": entry,
         "stop_loss": sl,
         "target_1": t1,
         "target_2": t2,
         "exit_price": round(exit_price, 2),
+
         "quantity": qty,
         "capital_used": plan["capital_used"],
         "max_loss": plan["max_loss"],
         "risk_per_share": plan["risk_per_share"],
+
         "result": trade_result,
         "exit_reason": result,
         "pnl": pnl,
         "r_multiple": r_multiple,
+
         "hit_t1": hit_t1,
         "hit_t2": hit_t2,
-        "hit_sl": hit_sl,
+        "hit_sl": hit_sl
     }
-
 
 def bt_build_summary(trades, capital):
     total = len(trades)
@@ -4522,6 +4648,18 @@ def bt_save_result_to_supabase(result):
         return
 
     try:
+        light_result = {
+            "symbol": result.get("symbol"),
+            "timeframe": result.get("timeframe"),
+            "period": result.get("period"),
+            "strategy": result.get("strategy"),
+            "capital": result.get("capital"),
+            "risk_amount": result.get("risk_amount"),
+            "summary": result.get("summary"),
+            "sample_trades": (result.get("trades") or [])[:20],
+            "server_time": result.get("server_time")
+        }
+
         row = {
             "symbol": result.get("symbol"),
             "timeframe": result.get("timeframe"),
@@ -4535,14 +4673,13 @@ def bt_save_result_to_supabase(result):
             "profit_factor": result.get("summary", {}).get("profit_factor"),
             "max_drawdown": result.get("summary", {}).get("max_drawdown"),
             "ai_grade": result.get("summary", {}).get("ai_grade"),
-            "raw_data": result,
+            "raw_data": light_result
         }
 
         supabase.table("backtest_results").insert(row).execute()
 
     except Exception as e:
         print("Backtest save skipped:", e)
-
 
 @app.route("/api/backtest-stock", methods=["POST"])
 def api_backtest_stock():
@@ -4588,80 +4725,10 @@ def api_backtest_pack():
     if not session.get("logged_in"):
         return jsonify({"status": "error", "message": "Not logged in."})
 
-    data = request.get_json(silent=True) or {}
-    symbols_raw = data.get("symbols", "")
-    symbols = [bt_clean_symbol(x) for x in str(symbols_raw).split(",") if bt_clean_symbol(x)]
-    symbols = symbols[:20]
-
-    if not symbols:
-        return jsonify({"status": "error", "message": "Enter at least one symbol."})
-
-    results = []
-    failed = []
-
-    for symbol in symbols:
-        try:
-            result = bt_run_backtest_for_symbol(
-                symbol=symbol,
-                timeframe=data.get("timeframe", "15m"),
-                period=data.get("period", "60d"),
-                strategy=data.get("strategy", "clean_engine"),
-                capital=data.get("capital", 10000),
-                risk_value=data.get("risk_value", 500),
-                risk_mode=data.get("risk_mode", "amount"),
-                qty_mode=data.get("qty_mode", "auto"),
-                manual_qty=data.get("manual_qty", 0),
-                lot_size=data.get("lot_size", 1),
-                lots=data.get("lots", 1),
-                max_hold_bars=data.get("max_hold_bars", 40),
-                target_mode=data.get("target_mode", "target_2"),
-                min_score=data.get("min_score", 50),
-                max_trades=data.get("max_trades", 80),
-            )
-
-            bt_save_result_to_supabase(result)
-            results.append(result)
-
-        except Exception as e:
-            failed.append({"symbol": symbol, "message": str(e)})
-
-    total_trades = sum(x["summary"]["total_trades"] for x in results)
-    net_pnl = round(sum(x["summary"]["net_pnl"] for x in results), 2)
-    wins = sum(x["summary"]["wins"] for x in results)
-    losses = sum(x["summary"]["losses"] for x in results)
-    closed = wins + losses
-    win_rate = round((wins / closed) * 100, 2) if closed else 0
-
-    ranked = sorted(results, key=lambda x: x["summary"]["net_pnl"], reverse=True)
-
-    if results:
-        best = ranked[0]
-        worst = ranked[-1]
-        ai_insight = (
-            f"Best backtest: {best['symbol']} with ₹{best['summary']['net_pnl']} net P&L. "
-            f"Weakest: {worst['symbol']} with ₹{worst['summary']['net_pnl']} net P&L. "
-            f"Overall win rate: {win_rate}%."
-        )
-    else:
-        ai_insight = "No valid backtest result found."
-
     return jsonify({
-        "status": "success",
-        "results": results,
-        "failed": failed,
-        "summary": {
-            "symbols_tested": len(results),
-            "failed": len(failed),
-            "total_trades": total_trades,
-            "net_pnl": net_pnl,
-            "wins": wins,
-            "losses": losses,
-            "win_rate": win_rate,
-        },
-        "ai_insight": ai_insight,
-        "server_time": bt_now(),
+        "status": "error",
+        "message": "Pack backtest must run sequentially from browser to avoid Render timeout and Yahoo rate limit."
     })
-
 
 @app.route("/api/backtest-history")
 def api_backtest_history():

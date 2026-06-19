@@ -26,7 +26,7 @@
 
         <div class="control-grid">
             <div class="control-card"><label>Timeframe</label><select id="timeframe"><option value="5m">5m</option><option value="15m" selected>15m</option><option value="30m">30m</option><option value="60m">60m</option><option value="1d">1D</option></select></div>
-            <div class="control-card"><label>Period</label><select id="period"><option value="7d">7 Days</option><option value="15d">15 Days</option><option value="30d">30 Days</option><option value="60d" selected>60 Days</option><option value="90d">90 Days</option><option value="180d">180 Days</option><option value="1y">1 Year</option></select></div>
+            <div class="control-card"><label>Period</label><select id="period"><option value="7d">7 Days</option><option value="15d">15 Days</option><option value="30d" selected>30 Days</option><option value="60d">60 Days</option><option value="90d">90 Days</option><option value="180d">180 Days</option><option value="1y">1 Year</option></select></div>
             <div class="control-card"><label>Strategy</label><select id="strategy"><option value="clean_engine" selected>Clean Decision Engine</option><option value="all_divergence">All RSI Divergence</option><option value="regular_bullish">Regular Bullish Divergence</option><option value="hidden_bullish">Hidden Bullish Divergence</option><option value="regular_bearish">Regular Bearish Divergence</option><option value="hidden_bearish">Hidden Bearish Divergence</option><option value="rsi_50_breakout">RSI 50 Breakout</option><option value="ema_rsi">EMA + RSI</option></select></div>
             <div class="control-card"><label>Target Mode</label><select id="targetMode"><option value="target_1">Exit at T1</option><option value="target_2" selected>Exit at T2</option></select></div>
             <div class="control-card"><label>Capital</label><input id="capital" type="number" value="10000"></div>
@@ -64,7 +64,7 @@
     <section id="resultsGrid" class="results-grid"><div class="empty-card">No backtest result yet.</div></section>
 </div>
 
-<nav class="bottom-nav"><a href="/dashboard">Home</a><a href="/chart-view">Chart</a><a href="/divergence-scanner">Scanner</a><a href="/paper-trading">Trades</a><a href="/backtesting" class="active">Backtest</a><a href="/backtesting">Backtest</a><a href="/alerts">Alerts</a><a href="/settings">Settings</a></nav>
+<nav class="bottom-nav"><a href="/dashboard">Home</a><a href="/chart-view">Chart</a><a href="/divergence-scanner">Scanner</a><a href="/paper-trading">Trades</a><a href="/backtesting" class="active">Backtest</a><a href="/alerts">Alerts</a><a href="/settings">Settings</a></nav>
 
 <script>
 let lastResult=null,packResults=[];
@@ -74,9 +74,106 @@ function getPayload(){const raw=document.getElementById("symbolsInput").value.tr
 function setStatus(t){document.getElementById("statusBox").innerText=t;}
 function setProgress(v){document.getElementById("progressBar").style.width=v+"%";}
 async function runSingleBacktest(){const payload=getPayload();if(!payload.symbol)return alert("Enter one symbol.");setStatus("Running backtest for "+payload.symbol+"...");setProgress(30);try{const res=await fetch("/api/backtest-stock",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const data=await res.json();setProgress(100);if(data.status!=="success"){setStatus("Error: "+data.message);alert(data.message||"Backtest failed");return;}lastResult=data;packResults=[data];renderSingleResult(data);setStatus("Backtest completed for "+data.symbol);document.getElementById("updatedAt").innerText="Updated: "+data.server_time;}catch(e){setStatus("Backtest error. Check Flask terminal.");}}
-async function runPackBacktest(){const payload=getPayload();if(!payload.symbols.trim())return alert("Enter symbols.");setStatus("Running pack backtest...");setProgress(20);try{const res=await fetch("/api/backtest-pack",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const data=await res.json();setProgress(100);if(data.status!=="success"){setStatus("Error: "+data.message);alert(data.message||"Pack backtest failed");return;}packResults=data.results||[];lastResult=packResults[0]||null;renderPackResult(data);setStatus("Pack backtest completed.");document.getElementById("updatedAt").innerText="Updated: "+data.server_time;}catch(e){setStatus("Pack backtest error. Check Flask terminal.");}}
+async function runPackBacktest() {
+    const payload = getPayload(false);
+
+    const symbols = payload.symbols
+        .split(",")
+        .map(x => x.trim().toUpperCase())
+        .filter(Boolean)
+        .slice(0, 10);
+
+    if (!symbols.length) {
+        alert("Enter symbols.");
+        return;
+    }
+
+    packResults = [];
+    const failed = [];
+
+    setStatus("Sequential pack backtest started. This avoids rate limit.");
+    setProgress(0);
+
+    for (let i = 0; i < symbols.length; i++) {
+        const symbol = symbols[i];
+
+        setStatus(`Backtesting ${symbol} (${i + 1}/${symbols.length})...`);
+        setProgress(Math.round((i / symbols.length) * 100));
+
+        try {
+            const onePayload = {
+                ...payload,
+                symbol: symbol
+            };
+
+            const res = await fetch("/api/backtest-stock", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(onePayload)
+            });
+
+            const data = await res.json();
+
+            if (data.status === "success") {
+                packResults.push(data);
+            } else {
+                failed.push({
+                    symbol: symbol,
+                    message: data.message || "Failed"
+                });
+            }
+
+        } catch (e) {
+            failed.push({
+                symbol: symbol,
+                message: "Request failed"
+            });
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 2200));
+    }
+
+    setProgress(100);
+
+    const totalTrades = packResults.reduce((s, x) => s + Number(x.summary?.total_trades || 0), 0);
+    const netPnl = packResults.reduce((s, x) => s + Number(x.summary?.net_pnl || 0), 0);
+    const wins = packResults.reduce((s, x) => s + Number(x.summary?.wins || 0), 0);
+    const losses = packResults.reduce((s, x) => s + Number(x.summary?.losses || 0), 0);
+    const closed = wins + losses;
+    const winRate = closed ? Number(((wins / closed) * 100).toFixed(2)) : 0;
+
+    const resultData = {
+        status: "success",
+        results: packResults,
+        failed: failed,
+        summary: {
+            symbols_tested: packResults.length,
+            failed: failed.length,
+            total_trades: totalTrades,
+            net_pnl: Number(netPnl.toFixed(2)),
+            wins: wins,
+            losses: losses,
+            win_rate: winRate
+        },
+        ai_insight: packResults.length
+            ? `Sequential pack completed. Tested ${packResults.length} symbols. Net P&L ₹${netPnl.toFixed(2)}. Win rate ${winRate}%.`
+            : "No symbols completed successfully.",
+        server_time: new Date().toLocaleTimeString()
+    };
+
+    renderPackResult(resultData);
+    setStatus(`Pack completed. Success ${packResults.length}, failed ${failed.length}.`);
+    document.getElementById("updatedAt").innerText = "Updated: " + new Date().toLocaleTimeString();
+}
+
 function updateSummary(s){s=s||{};document.getElementById("totalTrades").innerText=s.total_trades||0;document.getElementById("winRate").innerText=(s.win_rate||0)+"%";document.getElementById("netPnl").innerText=money(s.net_pnl||0);document.getElementById("profitFactor").innerText=s.profit_factor||0;document.getElementById("maxDrawdown").innerText=money(s.max_drawdown||0);document.getElementById("target1Hit").innerText=(s.target1_hit_rate||0)+"%";document.getElementById("target2Hit").innerText=(s.target2_hit_rate||0)+"%";document.getElementById("slHit").innerText=(s.sl_hit_rate||0)+"%";document.getElementById("aiGrade").innerText=s.ai_grade||"AI Strategy Rating";document.getElementById("aiInsight").innerText=s.ai_insight||"No AI insight.";}
-function renderSingleResult(data){updateSummary(data.summary||{});drawEquityCurve(data.summary?.equity_curve||[]);document.getElementById("chartSub").innerText=`${data.symbol} • ${data.strategy} • ${data.timeframe} • ${data.period}`;const grid=document.getElementById("resultsGrid");grid.innerHTML="";const card=document.createElement("div");card.className="result-card large-card";card.innerHTML=`<div class="result-top"><div><h3>${data.symbol}</h3><p>${data.strategy} • ${data.timeframe} • ${data.period}</p></div><span class="grade">${data.summary.ai_grade}</span></div><div class="metric-grid"><div><p>Total Trades</p><b>${data.summary.total_trades}</b></div><div><p>Wins</p><b class="profit">${data.summary.wins}</b></div><div><p>Losses</p><b class="loss">${data.summary.losses}</b></div><div><p>Win Rate</p><b>${data.summary.win_rate}%</b></div><div><p>Net P&L</p><b class="${Number(data.summary.net_pnl)>=0?"profit":"loss"}">${money(data.summary.net_pnl)}</b></div><div><p>ROI</p><b>${data.summary.roi_percent}%</b></div><div><p>Profit Factor</p><b>${data.summary.profit_factor}</b></div><div><p>Max DD</p><b class="loss">${money(data.summary.max_drawdown)}</b></div></div><h4 class="section-title">Trades</h4><div class="trade-list">${(data.trades||[]).map(t=>`<div class="trade-row"><div><b>${t.symbol}</b><p>${t.setup_type}</p><small>${t.entry_time}</small></div><div><p>Direction</p><b>${t.direction}</b></div><div><p>Entry</p><b>${money(t.entry)}</b></div><div><p>SL</p><b class="loss">${money(t.stop_loss)}</b></div><div><p>T1</p><b class="profit">${money(t.target_1)}</b></div><div><p>T2</p><b class="profit">${money(t.target_2)}</b></div><div><p>Exit</p><b>${money(t.exit_price)}</b></div><div><p>Result</p><b class="${Number(t.pnl)>=0?"profit":"loss"}">${t.exit_reason}</b></div><div><p>P&L</p><b class="${Number(t.pnl)>=0?"profit":"loss"}">${money(t.pnl)}</b></div><div><p>R</p><b>${t.r_multiple}R</b></div></div>`).join("")}</div>`;grid.appendChild(card);}
+function renderSingleResult(data){updateSummary(data.summary||{});drawEquityCurve(data.summary?.equity_curve||[]);document.getElementById("chartSub").innerText=`${data.symbol} • ${data.strategy} • ${data.timeframe} • ${data.period}`;const grid=document.getElementById("resultsGrid");grid.innerHTML="";const card=document.createElement("div");card.className="result-card large-card";card.innerHTML=`<div class="result-top"><div><h3>${data.symbol}</h3><p>${data.strategy} • ${data.timeframe} • ${data.period}</p></div><span class="grade">${data.summary.ai_grade}</span></div><div class="metric-grid"><div><p>Total Trades</p><b>${data.summary.total_trades}</b></div><div><p>Wins</p><b class="profit">${data.summary.wins}</b></div><div><p>Losses</p><b class="loss">${data.summary.losses}</b></div><div><p>Win Rate</p><b>${data.summary.win_rate}%</b></div><div><p>Net P&L</p><b class="${Number(data.summary.net_pnl)>=0?"profit":"loss"}">${money(data.summary.net_pnl)}</b></div><div><p>ROI</p><b>${data.summary.roi_percent}%</b></div><div><p>Profit Factor</p><b>${data.summary.profit_factor}</b></div><div><p>Max DD</p><b class="loss">${money(data.summary.max_drawdown)}</b></div></div><h4 class="section-title">Trades</h4><div class="trade-list">${(data.trades||[]).map(t=>`<div class="trade-row"><div><b>${t.symbol}</b><p>${t.setup_type}</p><small>${t.entry_time}</small></div><div><p>Direction</p><b>${t.direction}</b></div><div><p>Entry</p><b>${money(t.entry)}</b></div><div><p>SL</p><b class="loss">${money(t.stop_loss)}</b></div><div><p>T1</p><b class="profit">${money(t.target_1)}</b></div><div><p>T2</p><b class="profit">${money(t.target_2)}</b></div><div><p>Exit</p><b>${money(t.exit_price)}</b></div><div><p>Result</p><b class="${Number(t.pnl)>=0?"profit":"loss"}">${t.exit_reason}</b></div><div><p>P&L</p><b class="${Number(t.pnl)>=0?"profit":"loss"}">${money(t.pnl)}</b></div><div><p>R</p><b>${t.r_multiple}R</b></div>
+<div class="execution-details">
+    <p><b>Entry Rule:</b> ${t.entry_rule || "-"}</p>
+    <p><b>Exit Rule:</b> ${t.exit_rule || "-"}</p>
+    <p><b>Execution:</b> ${t.execution_quality || "-"}</p>
+</div>
+</div>`).join("")}</div>`;grid.appendChild(card);}
 function renderPackResult(data){const s=data.summary||{};updateSummary({total_trades:s.total_trades||0,win_rate:s.win_rate||0,net_pnl:s.net_pnl||0,profit_factor:0,max_drawdown:0,target1_hit_rate:0,target2_hit_rate:0,sl_hit_rate:0,ai_grade:"Pack Backtest",ai_insight:data.ai_insight||"Pack completed."});const all=[];let idx=1;(data.results||[]).forEach(r=>(r.summary.equity_curve||[]).forEach(e=>all.push({index:idx++,equity:e.equity})));drawEquityCurve(all);const grid=document.getElementById("resultsGrid");grid.innerHTML="";(data.results||[]).forEach(r=>{const card=document.createElement("div");card.className="result-card";card.innerHTML=`<div class="result-top"><div><h3>${r.symbol}</h3><p>${r.strategy} • ${r.timeframe}</p></div><span class="grade">${r.summary.ai_grade}</span></div><div class="metric-grid small"><div><p>Trades</p><b>${r.summary.total_trades}</b></div><div><p>Win Rate</p><b>${r.summary.win_rate}%</b></div><div><p>Net P&L</p><b class="${Number(r.summary.net_pnl)>=0?"profit":"loss"}">${money(r.summary.net_pnl)}</b></div><div><p>PF</p><b>${r.summary.profit_factor}</b></div><div><p>DD</p><b class="loss">${money(r.summary.max_drawdown)}</b></div><div><p>SL Hit</p><b>${r.summary.sl_hit_rate}%</b></div></div><div class="ai-mini">${r.summary.ai_insight}</div><button class="open-detail-btn">View Trades</button>`;card.querySelector("button").onclick=()=>renderSingleResult(r);grid.appendChild(card);});if((data.failed||[]).length){const f=document.createElement("div");f.className="result-card failed-card";f.innerHTML=`<h3>Failed Symbols</h3>${(data.failed||[]).map(x=>`<p><b>${x.symbol}</b>: ${x.message}</p>`).join("")}`;grid.appendChild(f);}}
 function drawEquityCurve(points){const c=document.getElementById("equityCanvas"),ctx=c.getContext("2d");ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);ctx.strokeStyle="#e5e7eb";ctx.lineWidth=1;for(let i=0;i<=5;i++){let y=30+i*50;ctx.beginPath();ctx.moveTo(30,y);ctx.lineTo(c.width-30,y);ctx.stroke();}if(!points||!points.length){ctx.fillStyle="#64748b";ctx.font="18px Arial";ctx.fillText("No equity curve data",40,160);return;}const vals=points.map(p=>Number(p.equity));const min=Math.min(...vals),max=Math.max(...vals),range=max-min||1;ctx.strokeStyle="#2563eb";ctx.lineWidth=3;ctx.beginPath();points.forEach((p,i)=>{const x=40+(i/Math.max(points.length-1,1))*(c.width-80);const y=c.height-40-((Number(p.equity)-min)/range)*(c.height-80);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});ctx.stroke();ctx.fillStyle="#172033";ctx.font="13px Arial";ctx.fillText("Min: ₹"+min.toFixed(2),40,c.height-12);ctx.fillText("Max: ₹"+max.toFixed(2),c.width-160,20);}
 async function loadHistory(){setStatus("Loading Supabase backtest history...");const res=await fetch("/api/backtest-history");const data=await res.json();if(data.status!=="success"){alert(data.message||"History loading failed");return;}const grid=document.getElementById("resultsGrid");grid.innerHTML="";if(!data.history.length){grid.innerHTML=`<div class="empty-card">No Supabase history found.</div>`;setStatus("No history found.");return;}data.history.forEach(h=>{const card=document.createElement("div");card.className="result-card";card.innerHTML=`<div class="result-top"><div><h3>${h.symbol}</h3><p>${h.strategy} • ${h.timeframe} • ${h.period}</p></div><span class="grade">${h.ai_grade}</span></div><div class="metric-grid small"><div><p>Trades</p><b>${h.total_trades}</b></div><div><p>Win Rate</p><b>${h.win_rate}%</b></div><div><p>Net P&L</p><b class="${Number(h.net_pnl)>=0?"profit":"loss"}">${money(h.net_pnl)}</b></div><div><p>PF</p><b>${h.profit_factor}</b></div><div><p>Drawdown</p><b class="loss">${money(h.max_drawdown)}</b></div><div><p>Date</p><b>${new Date(h.created_at).toLocaleDateString()}</b></div></div>`;grid.appendChild(card);});setStatus("History loaded.");}
