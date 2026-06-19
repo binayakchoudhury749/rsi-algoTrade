@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard - RSI Divergence Pro AI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #050816;
+            color: white;
+            padding-bottom: 80px;
+        }
+
+        .header {
+            padding: 20px;
+        }
+
+        .header h2 {
+            margin: 0;
+        }
+
+        .header p {
+            color: #9ca3af;
+            margin-top: 6px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            padding: 16px;
+        }
+
+        .card {
+            background: #111827;
+            border-radius: 18px;
+            padding: 18px;
+        }
+
+        .card h3 {
+            margin: 0;
+            font-size: 15px;
+            color: #9ca3af;
+        }
+
+        .card h1 {
+            margin: 10px 0 0;
+            font-size: 26px;
+        }
+
+        .big-card {
+            margin: 16px;
+            background: #111827;
+            border-radius: 18px;
+            padding: 18px;
+        }
+
+        .btn {
+            display: block;
+            background: #22c55e;
+            color: #03120a;
+            text-align: center;
+            padding: 14px;
+            border-radius: 14px;
+            text-decoration: none;
+            font-weight: bold;
+            margin-top: 14px;
+        }
+
+        .bottom-nav {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #111827;
+            display: flex;
+            justify-content: space-around;
+            padding: 12px 6px;
+            border-top: 1px solid #1f2937;
+        }
+
+        .bottom-nav a {
+            color: #9ca3af;
+            text-decoration: none;
+            font-size: 13px;
+        }
+
+        .bottom-nav a.active {
+            color: #22c55e;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h2>RSI Divergence Pro AI</h2>
+    <p>15-min RSI divergence trading assistant</p>
+</div>
+
+<div class="grid">
+    <div class="card">
+        <h3>Total Trades</h3>
+        <h1>0</h1>
+    </div>
+
+    <div class="card">
+        <h3>Open Signals</h3>
+        <h1>0</h1>
+    </div>
+
+    <div class="card">
+        <h3>Win Rate</h3>
+        <h1>0%</h1>
+    </div>
+
+    <div class="card">
+        <h3>Total P/L</h3>
+        <h1>₹0</h1>
+    </div>
+</div>
+
+<div class="big-card">
+    <h3>Main Strategy</h3>
+    <p>RSI Divergence on 15-minute candles with 1:3 and 1:5 risk reward.</p>
+
+    <a class="btn" href="/chart-view">Open Chart</a>
+    <a class="btn" href="/divergence-scanner">Open Scanner</a>
+</div>
+
+<div class="bottom-nav">
+    <a class="active" href="/dashboard">Home</a>
+    <a href="/chart-view">Chart</a>
+    <a href="/divergence-scanner">Scanner</a>
+    <a href="/paper-trading">Trades</a>
+    <a href="/settings">Settings</a>
+</div>
+
+</body>
+</html>

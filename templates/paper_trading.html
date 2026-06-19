@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Paper Trading Ultra AI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/css/paper_trading.css">
+</head>
+
+<body>
+
+<div class="app">
+
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-icon">AI</div>
+            <div>
+                <h1>Paper Trading Ultra AI</h1>
+                <p>Live P&L • AI Coach • Risk Engine • Trade Journal</p>
+            </div>
+        </div>
+
+        <div class="top-actions">
+            <span class="live-pill">
+                <span class="live-dot"></span>
+                LIVE PAPER TRACKING
+            </span>
+            <a href="/logout" class="logout">Logout</a>
+        </div>
+    </header>
+
+    <section class="hero-card">
+        <div>
+            <h2>Ultra Trade Control Room</h2>
+            <p>
+                Track every saved scanner setup with live paper P&L, risk, quantity, target progress,
+                SL danger, AI coaching and mistake analysis.
+            </p>
+        </div>
+
+        <div class="hero-actions">
+            <button onclick="toggleManualForm()" class="primary-btn">Add Manual Trade</button>
+            <button onclick="loadTrades(true)" class="secondary-btn">Full Refresh</button>
+            <a href="/api/export-paper-trades" class="export-btn">Export CSV</a>
+        </div>
+    </section>
+
+    <section class="summary-grid ultra-summary">
+        <div class="summary-card">
+            <p>Total Trades</p>
+            <h3 id="totalCount">0</h3>
+        </div>
+
+        <div class="summary-card blue">
+            <p>Open Trades</p>
+            <h3 id="openCount">0</h3>
+        </div>
+
+        <div class="summary-card green live-value">
+            <p>Live Net P&L</p>
+            <h3 id="netPnl">₹0</h3>
+        </div>
+
+        <div class="summary-card purple">
+            <p>Win Rate</p>
+            <h3 id="winRate">0%</h3>
+        </div>
+
+        <div class="summary-card">
+            <p>Unrealized P&L</p>
+            <h3 id="unrealizedPnl">₹0</h3>
+        </div>
+
+        <div class="summary-card">
+            <p>Realized P&L</p>
+            <h3 id="realizedPnl">₹0</h3>
+        </div>
+
+        <div class="summary-card risky">
+            <p>Open Risk</p>
+            <h3 id="openRisk">₹0</h3>
+        </div>
+
+        <div class="summary-card">
+            <p>Last Live Update</p>
+            <h3 id="lastLiveUpdate">-</h3>
+        </div>
+    </section>
+
+    <section class="ai-command-grid">
+
+        <div class="ai-box main-ai">
+            <div class="ai-head-row">
+                <div>
+                    <h3>AI Performance Coach</h3>
+                    <p id="aiInsights">Loading AI insights...</p>
+                </div>
+
+                <span id="aiMood" class="ai-mood">WAITING</span>
+            </div>
+        </div>
+
+        <div class="ai-box">
+            <h3>Risk Radar</h3>
+            <p id="riskRadar">Checking open risk...</p>
+        </div>
+
+        <div class="ai-box">
+            <h3>Discipline Check</h3>
+            <p id="disciplineCheck">Follow entry, SL and exit rules strictly.</p>
+        </div>
+
+    </section>
+
+    <section id="manualForm" class="manual-form hidden">
+        <h3>Add Manual Paper Trade</h3>
+
+        <div class="form-grid">
+            <div>
+                <label>Symbol</label>
+                <input id="mSymbol" placeholder="RELIANCE">
+            </div>
+
+            <div>
+                <label>Direction</label>
+                <select id="mDirection">
+                    <option value="bullish">Bullish</option>
+                    <option value="bearish">Bearish</option>
+                </select>
+            </div>
+
+            <div>
+                <label>Entry</label>
+                <input id="mEntry" type="number" step="0.01">
+            </div>
+
+            <div>
+                <label>Stop Loss</label>
+                <input id="mSL" type="number" step="0.01">
+            </div>
+
+            <div>
+                <label>Target 1</label>
+                <input id="mT1" type="number" step="0.01">
+            </div>
+
+            <div>
+                <label>Target 2</label>
+                <input id="mT2" type="number" step="0.01">
+            </div>
+
+            <div>
+                <label>Quantity</label>
+                <input id="mQty" type="number" value="1">
+            </div>
+
+            <div>
+                <label>Capital</label>
+                <input id="mCapital" type="number" value="10000">
+            </div>
+        </div>
+
+        <div class="notes-box">
+            <label>Reason / Notes</label>
+            <textarea id="mNotes" placeholder="Why are you taking this paper trade?"></textarea>
+        </div>
+
+        <div class="form-actions">
+            <button onclick="saveManualTrade()" class="primary-btn">Save Trade</button>
+            <button onclick="toggleManualForm()" class="secondary-btn">Cancel</button>
+        </div>
+    </section>
+
+    <section class="control-panel">
+        <div class="filter-row">
+            <button class="filter-btn active" onclick="setFilter('ALL', this)">All</button>
+            <button class="filter-btn" onclick="setFilter('OPEN', this)">Open</button>
+            <button class="filter-btn" onclick="setFilter('CLOSED', this)">Closed</button>
+            <button class="filter-btn" onclick="setFilter('WIN', this)">Wins</button>
+            <button class="filter-btn" onclick="setFilter('LOSS', this)">Losses</button>
+            <button class="filter-btn" onclick="setFilter('DANGER', this)">SL Danger</button>
+            <button class="filter-btn" onclick="setFilter('TARGET', this)">Near Target</button>
+        </div>
+
+        <div class="right-controls">
+            <div class="refresh-box">
+                <label>Live Refresh</label>
+                <select id="autoRefresh" onchange="restartAuto()">
+                    <option value="0">Off</option>
+                    <option value="1" selected>1 sec</option>
+                    <option value="5">5 sec</option>
+                    <option value="10">10 sec</option>
+                    <option value="30">30 sec</option>
+                </select>
+            </div>
+
+            <div class="refresh-box">
+                <label>Sort By</label>
+                <select id="sortBy" onchange="renderTrades()">
+                    <option value="live_pnl">Live P&L</option>
+                    <option value="risk">Risk</option>
+                    <option value="score">Score</option>
+                    <option value="symbol">Symbol</option>
+                    <option value="status">Status</option>
+                </select>
+            </div>
+        </div>
+    </section>
+
+    <section id="tradeGrid" class="trade-grid">
+        <div class="empty-card">Loading trades...</div>
+    </section>
+
+</div>
+
+<nav class="bottom-nav">
+    <a href="/dashboard">Home</a>
+    <a href="/chart-view">Chart</a>
+    <a href="/divergence-scanner">Scanner</a>
+    <a href="/paper-trading" class="active">Trades</a>
+    <a href="/settings">Settings</a>
+</nav>
+
+<script>
+    let trades = [];
+    let activeFilter = "ALL";
+    let autoTimer = null;
+    let fullReloadTimer = null;
+    let liveBusy = false;
+
+    function money(v) {
+        if (v === null || v === undefined || v === "") return "₹0.00";
+        return "₹" + Number(v).toFixed(2);
+    }
+
+    function safe(v, fallback = "-") {
+        if (v === null || v === undefined || v === "") return fallback;
+        return v;
+    }
+
+    function pnlClass(v) {
+        v = Number(v || 0);
+        if (v > 0) return "profit";
+        if (v < 0) return "loss";
+        return "flat";
+    }
+
+    function toggleManualForm() {
+        document.getElementById("manualForm").classList.toggle("hidden");
+    }
+
+    function setFilter(filter, btn) {
+        activeFilter = filter;
+
+        document.querySelectorAll(".filter-btn").forEach(x => x.classList.remove("active"));
+        btn.classList.add("active");
+
+        renderTrades();
+    }
+
+    async function loadTrades(live = true) {
+        try {
+            const res = await fetch(`/api/paper-trades?live=${live ? "1" : "0"}`);
+            const data = await res.json();
+
+            if (data.status !== "success") {
+                alert(data.message || "Unable to load trades.");
+                return;
+            }
+
+            trades = data.trades || [];
+
+            updateSummary(data.summary || {}, data.server_time || "-");
+            buildUltraAI(data.summary || {}, trades, data.ai_insights || "");
+
+            renderTrades();
+
+        } catch (error) {
+            document.getElementById("tradeGrid").innerHTML = `
+                <div class="empty-card">Trade loading error. Check Flask terminal.</div>
+            `;
+        }
+    }
+
+    async function loadLivePnl() {
+        if (liveBusy) return;
+        liveBusy = true;
+
+        try {
+            const res = await fetch("/api/paper-live-pnl");
+            const data = await res.json();
+
+            if (data.status !== "success") {
+                liveBusy = false;
+                return;
+            }
+
+            trades = data.trades || trades;
+
+            updateSummary(data.summary || {}, data.server_time || "-");
+            buildUltraAI(data.summary || {}, trades, data.ai_insights || "");
+            renderTrades();
+
+        } catch (error) {
+            console.log("Live P&L refresh failed");
+        }
+
+        liveBusy = false;
+    }
+
+    function updateSummary(summary, serverTime) {
+        document.getElementById("totalCount").innerText = summary.total_count || 0;
+        document.getElementById("openCount").innerText = summary.open_count || 0;
+        document.getElementById("netPnl").innerText = money(summary.net_pnl || 0);
+        document.getElementById("unrealizedPnl").innerText = money(summary.unrealized_pnl || 0);
+        document.getElementById("realizedPnl").innerText = money(summary.realized_pnl || 0);
+        document.getElementById("winRate").innerText = (summary.win_rate || 0) + "%";
+        document.getElementById("lastLiveUpdate").innerText = serverTime || "-";
+
+        document.getElementById("netPnl").className = pnlClass(summary.net_pnl);
+        document.getElementById("unrealizedPnl").className = pnlClass(summary.unrealized_pnl);
+        document.getElementById("realizedPnl").className = pnlClass(summary.realized_pnl);
+
+        const openRisk = trades
+            .filter(x => x.status === "OPEN")
+            .reduce((sum, x) => sum + Number(x.max_loss || 0), 0);
+
+        document.getElementById("openRisk").innerText = money(openRisk);
+    }
+
+    function buildUltraAI(summary, list, serverInsight) {
+        const open = list.filter(x => x.status === "OPEN");
+        const dangerous = open.filter(x => String(x.live_alert || "").includes("SL")).length;
+        const nearTarget = open.filter(x => String(x.live_alert || "").includes("TARGET")).length;
+        const net = Number(summary.net_pnl || 0);
+        const winRate = Number(summary.win_rate || 0);
+
+        let mood = "NEUTRAL";
+        let riskRadar = "Risk is normal.";
+        let discipline = "Follow the original entry, SL and exit plan. Do not change rules after entry.";
+
+        if (net > 0 && winRate >= 50) {
+            mood = "CONTROLLED";
+        }
+
+        if (net < 0) {
+            mood = "DEFENSIVE";
+            discipline = "Reduce new trades. Review losing setups before saving more signals.";
+        }
+
+        if (dangerous > 0) {
+            mood = "DANGER";
+            riskRadar = `${dangerous} open trade is near or touching stop loss. Check immediately.`;
+        } else if (nearTarget > 0) {
+            mood = "TARGET ZONE";
+            riskRadar = `${nearTarget} trade is near target. Consider following your exit plan.`;
+        } else if (open.length > 5) {
+            riskRadar = "Many open trades. Avoid overtrading and control total risk.";
+        }
+
+        document.getElementById("aiMood").innerText = mood;
+        document.getElementById("riskRadar").innerText = riskRadar;
+        document.getElementById("disciplineCheck").innerText = discipline;
+
+        document.getElementById("aiInsights").innerText =
+            serverInsight || "AI is learning from your paper trades.";
+    }
+
+    function filteredTrades() {
+        if (activeFilter === "OPEN") return trades.filter(x => x.status === "OPEN");
+        if (activeFilter === "CLOSED") return trades.filter(x => x.status === "CLOSED");
+        if (activeFilter === "WIN") return trades.filter(x => x.result === "WIN");
+        if (activeFilter === "LOSS") return trades.filter(x => x.result === "LOSS");
+        if (activeFilter === "DANGER") return trades.filter(x => String(x.live_alert || "").includes("SL"));
+        if (activeFilter === "TARGET") return trades.filter(x => String(x.live_alert || "").includes("TARGET"));
+        return trades;
+    }
+
+    function sortedTrades(list) {
+        const sortBy = document.getElementById("sortBy").value;
+        const out = [...list];
+
+        if (sortBy === "live_pnl") {
+            out.sort((a, b) => Number(b.unrealized_pnl || 0) - Number(a.unrealized_pnl || 0));
+        }
+
+        if (sortBy === "risk") {
+            out.sort((a, b) => Number(b.max_loss || 0) - Number(a.max_loss || 0));
+        }
+
+        if (sortBy === "score") {
+            out.sort((a, b) => Number(b.pro_score || 0) - Number(a.pro_score || 0));
+        }
+
+        if (sortBy === "symbol") {
+            out.sort((a, b) => String(a.symbol).localeCompare(String(b.symbol)));
+        }
+
+        if (sortBy === "status") {
+            out.sort((a, b) => String(a.status).localeCompare(String(b.status)));
+        }
+
+        return out;
+    }
+
+    function progressPercent(t) {
+        const direction = String(t.direction || "").toLowerCase();
+        const entry = Number(t.entry || 0);
+        const price = Number(t.current_price || 0);
+        const t1 = Number(t.target_1 || 0);
+        const sl = Number(t.stop_loss || 0);
+
+        if (!entry || !price || !t1 || !sl) return 0;
+
+        if (direction === "bullish") {
+            if (price <= sl) return 0;
+            if (price >= t1) return 100;
+            return Math.max(0, Math.min(100, ((price - sl) / (t1 - sl)) * 100));
+        }
+
+        if (direction === "bearish") {
+            if (price >= sl) return 0;
+            if (price <= t1) return 100;
+            return Math.max(0, Math.min(100, ((sl - price) / (sl - t1)) * 100));
+        }
+
+        return 0;
+    }
+
+    function rMultiple(t) {
+        const maxLoss = Number(t.max_loss || 0);
+        const pnl = Number(t.unrealized_pnl || t.realized_pnl || 0);
+
+        if (!maxLoss) return "0.00R";
+
+        return (pnl / maxLoss).toFixed(2) + "R";
+    }
+
+    function distanceText(t) {
+        const price = Number(t.current_price || 0);
+        const sl = Number(t.stop_loss || 0);
+        const t1 = Number(t.target_1 || 0);
+
+        if (!price) return "No live price.";
+
+        let slDist = sl ? Math.abs(price - sl).toFixed(2) : "-";
+        let t1Dist = t1 ? Math.abs(t1 - price).toFixed(2) : "-";
+
+        return `SL distance ₹${slDist} • T1 distance ₹${t1Dist}`;
+    }
+
+    function renderTrades() {
+        const grid = document.getElementById("tradeGrid");
+        const list = sortedTrades(filteredTrades());
+
+        if (!list.length) {
+            grid.innerHTML = `<div class="empty-card">No trades found.</div>`;
+            return;
+        }
+
+        grid.innerHTML = "";
+
+        list.forEach(t => {
+            const progress = progressPercent(t);
+
+            const card = document.createElement("div");
+            card.className = "trade-card";
+
+            card.innerHTML = `
+                <div class="trade-top">
+                    <div>
+                        <h3>${safe(t.symbol)}</h3>
+                        <p>${safe(t.signal)} • ${safe(t.setup_type)}</p>
+                    </div>
+
+                    <span class="status ${String(t.status).toLowerCase()}">${safe(t.status)}</span>
+                </div>
+
+                <div class="live-alert ${String(t.live_alert || "").includes("SL") ? "danger-alert" : ""}">
+                    ${safe(t.live_alert, "Tracking")}
+                </div>
+
+                <div class="health-box">
+                    <div class="health-top">
+                        <span>Trade Health</span>
+                        <b>${Math.round(progress)}%</b>
+                    </div>
+                    <div class="health-track">
+                        <div class="health-fill" style="width:${progress}%"></div>
+                    </div>
+                    <p>${distanceText(t)}</p>
+                </div>
+
+                <div class="pnl-box">
+                    <div>
+                        <p>Current Price</p>
+                        <h4>${money(t.current_price)}</h4>
+                    </div>
+
+                    <div>
+                        <p>Open P&L</p>
+                        <h4 class="${pnlClass(t.unrealized_pnl)}">${money(t.unrealized_pnl)}</h4>
+                    </div>
+
+                    <div>
+                        <p>R Multiple</p>
+                        <h4 class="${pnlClass(t.unrealized_pnl)}">${rMultiple(t)}</h4>
+                    </div>
+                </div>
+
+                <div class="trade-details">
+                    <div>
+                        <p>Direction</p>
+                        <b>${safe(t.direction)}</b>
+                    </div>
+
+                    <div>
+                        <p>Entry</p>
+                        <b>${money(t.entry)}</b>
+                    </div>
+
+                    <div>
+                        <p>SL</p>
+                        <b class="loss">${money(t.stop_loss)}</b>
+                    </div>
+
+                    <div>
+                        <p>T1</p>
+                        <b class="profit">${money(t.target_1)}</b>
+                    </div>
+
+                    <div>
+                        <p>T2</p>
+                        <b class="profit">${money(t.target_2)}</b>
+                    </div>
+
+                    <div>
+                        <p>Qty</p>
+                        <b>${safe(t.quantity, 0)}</b>
+                    </div>
+
+                    <div>
+                        <p>Capital Used</p>
+                        <b>${money(t.capital_used)}</b>
+                    </div>
+
+                    <div>
+                        <p>Max Loss</p>
+                        <b class="loss">${money(t.max_loss)}</b>
+                    </div>
+
+                    <div>
+                        <p>Score</p>
+                        <b>${safe(t.pro_score, 0)}</b>
+                    </div>
+
+                    <div>
+                        <p>Priority</p>
+                        <b>${safe(t.ai_priority)}</b>
+                    </div>
+
+                    <div>
+                        <p>Realized</p>
+                        <b class="${pnlClass(t.realized_pnl)}">${money(t.realized_pnl)}</b>
+                    </div>
+
+                    <div>
+                        <p>Result</p>
+                        <b>${safe(t.result)}</b>
+                    </div>
+                </div>
+
+                <div class="ai-reason">
+                    <b>AI Reason:</b> ${safe(t.ai_reason, "No AI reason saved.")}
+                </div>
+
+                <div class="plan-box">
+                    <b>Entry Plan:</b> ${safe(t.entry_plan, "Wait for confirmation.")}
+                </div>
+
+                <div class="plan-box exit">
+                    <b>Exit Plan:</b> ${safe(t.exit_plan, "Follow SL and target discipline.")}
+                </div>
+
+                <div class="notes-view">
+                    <b>Notes:</b> ${safe(t.notes, "No notes.")}
+                    <br>
+                    <b>Mistake Tags:</b> ${safe(t.mistake_tags, "None")}
+                </div>
+
+                <div class="trade-actions">
+                    <a href="/chart-view?symbol=${t.symbol}&tf=15m">Open Chart</a>
+                    ${t.status === "OPEN" ? `<button onclick="closeTrade(${t.id})">Close</button>` : ""}
+                    <button onclick="editNotes(${t.id})">Notes</button>
+                    <button class="delete-btn" onclick="deleteTrade(${t.id})">Delete</button>
+                </div>
+            `;
+
+            grid.appendChild(card);
+        });
+    }
+
+    async function saveManualTrade() {
+        const payload = {
+            symbol: document.getElementById("mSymbol").value.trim().toUpperCase(),
+            direction: document.getElementById("mDirection").value,
+            entry: document.getElementById("mEntry").value,
+            stop_loss: document.getElementById("mSL").value,
+            target_1: document.getElementById("mT1").value,
+            target_2: document.getElementById("mT2").value,
+            quantity: document.getElementById("mQty").value,
+            capital: document.getElementById("mCapital").value,
+            signal: "Manual Paper Trade",
+            setup_type: "Manual",
+            ai_reason: document.getElementById("mNotes").value,
+            notes: document.getElementById("mNotes").value
+        };
+
+        if (!payload.symbol || !payload.entry || !payload.stop_loss) {
+            alert("Symbol, Entry and Stop Loss are required.");
+            return;
+        }
+
+        const res = await fetch("/api/save-paper-trade", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        alert(data.message || "Saved.");
+
+        toggleManualForm();
+        loadTrades(true);
+    }
+
+    async function closeTrade(id) {
+        const trade = trades.find(x => x.id === id);
+        const suggested = trade ? trade.current_price : "";
+
+        const exitPrice = prompt("Enter exit price. Leave blank to use live/current price:", suggested || "");
+        const reason = prompt("Exit reason:", "Manual Exit") || "Manual Exit";
+        const notes = prompt("Exit notes / mistake:", "") || "";
+
+        const res = await fetch("/api/close-paper-trade", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                id: id,
+                exit_price: exitPrice,
+                exit_reason: reason,
+                notes: notes
+            })
+        });
+
+        const data = await res.json();
+        alert(`${data.message || "Closed"} Result: ${data.result || ""} P&L: ${money(data.realized_pnl || 0)}`);
+
+        loadTrades(true);
+    }
+
+    async function editNotes(id) {
+        const trade = trades.find(x => x.id === id);
+
+        if (!trade) return;
+
+        const notes = prompt("Trade notes:", trade.notes || "") || "";
+        const tags = prompt("Mistake tags, example: late entry, overtrade, ignored SL", trade.mistake_tags || "") || "";
+
+        const res = await fetch("/api/update-paper-trade-notes", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                id: id,
+                notes: notes,
+                mistake_tags: tags
+            })
+        });
+
+        const data = await res.json();
+        alert(data.message || "Updated.");
+
+        loadTrades(true);
+    }
+
+    async function deleteTrade(id) {
+        if (!confirm("Delete this trade?")) return;
+
+        const res = await fetch("/api/delete-paper-trade", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({id})
+        });
+
+        const data = await res.json();
+        alert(data.message || "Deleted.");
+
+        loadTrades(true);
+    }
+
+    function restartAuto() {
+        if (autoTimer) {
+            clearInterval(autoTimer);
+            autoTimer = null;
+        }
+
+        const sec = Number(document.getElementById("autoRefresh").value || 0);
+
+        if (!sec) return;
+
+        autoTimer = setInterval(() => {
+            loadLivePnl();
+        }, sec * 1000);
+    }
+
+    function startFullReload() {
+        if (fullReloadTimer) {
+            clearInterval(fullReloadTimer);
+        }
+
+        fullReloadTimer = setInterval(() => {
+            loadTrades(true);
+        }, 15000);
+    }
+
+    loadTrades(true);
+    restartAuto();
+    startFullReload();
+</script>
+
+</body>
+</html>

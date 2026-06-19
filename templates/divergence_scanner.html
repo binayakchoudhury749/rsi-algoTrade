@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Beast Scanner Pro - Clean Decision Engine</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/css/scanner.css">
+</head>
+
+<body>
+
+<div class="app">
+
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-icon">AI</div>
+            <div>
+                <h1>Beast Scanner Pro</h1>
+                <p>Clear BUY/SELL focus • Correct SL • Trigger • Lots • Risk</p>
+            </div>
+        </div>
+
+        <div class="top-actions">
+            <span class="live-pill"><span class="live-dot"></span>PAPER MODE</span>
+            <a href="/logout" class="logout">Logout</a>
+        </div>
+    </header>
+
+    <section class="hero-card">
+        <div>
+            <h2>Clean Decision Divergence Scanner</h2>
+            <p>
+                Scanner now removes mixed confusion. Every card shows one focused setup:
+                CLEAR BUY, CLEAR SELL/EXIT, or NO TRADE.
+            </p>
+        </div>
+
+        <div class="hero-actions">
+            <button class="scan-btn" onclick="startScanner(true)">Run Scanner</button>
+            <button id="stopScanBtn" class="stop-btn" onclick="stopScanner()" disabled>Stop</button>
+            <button class="clear-btn" onclick="clearScanner()">Clear</button>
+        </div>
+    </section>
+
+    <section class="scanner-controls">
+
+        <div class="stock-pack-row">
+            <button onclick="loadPack('default')">Default</button>
+            <button onclick="loadPack('nifty')">Nifty Pack</button>
+            <button onclick="loadPack('bank')">Banks</button>
+            <button onclick="loadPack('railway')">Railway</button>
+            <button onclick="loadPack('defence')">Defence</button>
+            <button onclick="loadPack('psu')">PSU</button>
+            <button onclick="loadPack('highvol')">High Volume</button>
+        </div>
+
+        <div class="input-box">
+            <label>Stocks to scan</label>
+            <textarea id="symbolsInput" placeholder="Enter stocks like RELIANCE,TATAMOTORS,ZOMATO"></textarea>
+            <small>Scanner will not reset after refresh. Results are saved in browser storage.</small>
+        </div>
+
+        <div class="control-grid">
+
+            <div class="control-card">
+                <label>Capital</label>
+                <input id="capitalInput" type="number" value="10000" min="1000">
+            </div>
+
+            <div class="control-card">
+                <label>Risk Mode</label>
+                <select id="riskMode">
+                    <option value="amount" selected>Fixed Amount</option>
+                    <option value="percent">Percent of Capital</option>
+                </select>
+            </div>
+
+            <div class="control-card">
+                <label>Risk Value</label>
+                <input id="riskValue" type="number" value="500" min="1">
+            </div>
+
+            <div class="control-card">
+                <label>Qty Mode</label>
+                <select id="qtyMode">
+                    <option value="auto" selected>Auto Risk Based</option>
+                    <option value="manual">Manual Shares</option>
+                    <option value="lots">By Lots</option>
+                </select>
+            </div>
+
+            <div class="control-card">
+                <label>Manual Shares</label>
+                <input id="manualQty" type="number" value="0" min="0">
+            </div>
+
+            <div class="control-card">
+                <label>No. of Lots</label>
+                <input id="lotCount" type="number" value="1" min="1">
+            </div>
+
+            <div class="control-card">
+                <label>Min Pro Score</label>
+                <select id="minScore" onchange="renderCards()">
+                    <option value="0">All</option>
+                    <option value="50">50+</option>
+                    <option value="65">65+</option>
+                    <option value="75">75+</option>
+                    <option value="85">85+</option>
+                </select>
+            </div>
+
+            <div class="control-card">
+                <label>Sort By</label>
+                <select id="sortBy" onchange="renderCards()">
+                    <option value="setup">Valid Setup</option>
+                    <option value="pro_score">Pro Score</option>
+                    <option value="priority">AI Priority</option>
+                    <option value="risk">Lowest Risk</option>
+                    <option value="qty">Highest Qty</option>
+                    <option value="symbol">Symbol</option>
+                </select>
+            </div>
+
+            <div class="control-card">
+                <label>Scan Speed</label>
+                <select id="parallelCount">
+                    <option value="2">Safe | 2 at once</option>
+                    <option value="4" selected>Fast | 4 at once</option>
+                    <option value="6">Aggressive | 6 at once</option>
+                </select>
+            </div>
+
+            <div class="control-card">
+                <label>Auto Refresh</label>
+                <select id="autoRefreshSeconds" onchange="restartAutoScan()">
+                    <option value="0" selected>Off</option>
+                    <option value="60">60 sec</option>
+                    <option value="120">120 sec</option>
+                    <option value="300">5 min</option>
+                </select>
+            </div>
+
+        </div>
+
+        <div class="filter-row">
+            <button class="filter-btn active" onclick="setFilter('ALL', this)">All</button>
+            <button class="filter-btn" onclick="setFilter('VALID', this)">Valid Setup</button>
+            <button class="filter-btn" onclick="setFilter('NO_TRADE', this)">No Trade</button>
+            <button class="filter-btn" onclick="setFilter('BUY', this)">Buy Focus</button>
+            <button class="filter-btn" onclick="setFilter('SELL', this)">Sell Focus</button>
+            <button class="filter-btn" onclick="setFilter('ENTRY_ACTIVE', this)">Entry Active</button>
+            <button class="filter-btn" onclick="setFilter('HIGH_PRIORITY', this)">High Priority</button>
+            <button class="filter-btn" onclick="setFilter('LOW_RISK', this)">Low Risk</button>
+        </div>
+
+        <div id="scannerStatus" class="scanner-status">Scanner ready. Enter stocks and click Run Scanner.</div>
+
+        <div class="progress-shell">
+            <div id="progressBar" class="progress-bar"></div>
+        </div>
+
+    </section>
+
+    <section class="summary-grid">
+        <div class="summary-card">
+            <p>Scanned</p>
+            <h3 id="scannedCount">0</h3>
+        </div>
+        <div class="summary-card strong">
+            <p>Valid Setups</p>
+            <h3 id="validCount">0</h3>
+        </div>
+        <div class="summary-card good">
+            <p>Entry Active</p>
+            <h3 id="activeCount">0</h3>
+        </div>
+        <div class="summary-card risky">
+            <p>Failed</p>
+            <h3 id="failedCount">0</h3>
+        </div>
+    </section>
+
+    <section class="results-head">
+        <div>
+            <h3>AI Scanner Results</h3>
+            <p id="updatedAt">Updated: -</p>
+        </div>
+        <div class="results-actions">
+            <button class="mini-btn" onclick="startScanner(true)">Refresh</button>
+        </div>
+    </section>
+
+    <section id="resultsGrid" class="results-grid">
+        <div class="empty-card">Enter stocks above and click Run Scanner.</div>
+    </section>
+
+</div>
+
+<nav class="bottom-nav">
+    <a href="/dashboard">Home</a>
+    <a href="/chart-view">Chart</a>
+    <a href="/divergence-scanner" class="active">Scanner</a>
+    <a href="/paper-trading">Trades</a>
+    <a href="/alerts">Alerts</a>
+</nav>
+
+<script>
+    let allResults = [];
+    let failedSymbols = [];
+    let activeFilter = "ALL";
+    let isScanning = false;
+    let scanRunId = 0;
+    let autoTimer = null;
+    let controllers = [];
+
+    const SCANNER_SAVE_KEY = "beast_scanner_saved_state_v2";
+
+    const STOCK_PACKS = {
+        default: "RELIANCE,TATAMOTORS,ZOMATO,SBIN,HDFCBANK,INFY,IREDA,IRFC,RVNL,HAL,BEL,SUZLON,JIOFIN,TATAPOWER,ADANIENT",
+        nifty: "RELIANCE,TCS,INFY,HDFCBANK,ICICIBANK,SBIN,AXISBANK,LT,ITC,BHARTIARTL,BAJFINANCE,TATAMOTORS,TATASTEEL,MARUTI,SUNPHARMA,WIPRO,HCLTECH,TECHM,NTPC,POWERGRID",
+        bank: "HDFCBANK,ICICIBANK,SBIN,AXISBANK,KOTAKBANK,PNB,BANKBARODA,CANBK,UNIONBANK,IDFCFIRSTB,FEDERALBNK,YESBANK",
+        railway: "IRFC,RVNL,IRCTC,RAILTEL,TITAGARH,BEML,CONCOR",
+        defence: "HAL,BEL,MAZDOCK,COCHINSHIP,BEML,BDL,GRSE,DATAPATTNS",
+        psu: "ONGC,NTPC,POWERGRID,COALINDIA,SAIL,BHEL,GAIL,RECLTD,PFC,NHPC,SJVN,HUDCO",
+        highvol: "RELIANCE,ZOMATO,TATAMOTORS,SBIN,IRFC,IREDA,RVNL,SUZLON,YESBANK,PNB,BANKBARODA,JIOFIN,TATAPOWER,ADANIENT"
+    };
+
+    function loadPack(type) {
+        document.getElementById("symbolsInput").value = STOCK_PACKS[type] || "";
+        setStatus("Stock pack loaded. Click Run Scanner.");
+        saveScannerState();
+    }
+
+    function getSymbols() {
+        return document.getElementById("symbolsInput").value.trim()
+            .split(",")
+            .map(x => x.trim().toUpperCase())
+            .filter(x => x.length > 0)
+            .slice(0, 50);
+    }
+
+    function setStatus(text) {
+        document.getElementById("scannerStatus").innerText = text;
+    }
+
+    function setProgress(done, total) {
+        const percent = total ? Math.round((done / total) * 100) : 0;
+        document.getElementById("progressBar").style.width = percent + "%";
+    }
+
+    function safeText(value, fallback = "-") {
+        if (value === null || value === undefined || value === "") return fallback;
+        return value;
+    }
+
+    function money(value) {
+        if (value === null || value === undefined || value === "" || Number(value) === 0) return "-";
+        return "₹" + Number(value).toFixed(2);
+    }
+
+    function setFilter(filter, btn) {
+        activeFilter = filter;
+        document.querySelectorAll(".filter-btn").forEach(x => x.classList.remove("active"));
+        btn.classList.add("active");
+        renderCards();
+    }
+
+    function saveScannerState() {
+        const state = {
+            allResults,
+            failedSymbols,
+            symbolsInput: document.getElementById("symbolsInput").value,
+            capital: document.getElementById("capitalInput").value,
+            riskMode: document.getElementById("riskMode").value,
+            riskValue: document.getElementById("riskValue").value,
+            qtyMode: document.getElementById("qtyMode").value,
+            manualQty: document.getElementById("manualQty").value,
+            lotCount: document.getElementById("lotCount").value,
+            updatedAt: document.getElementById("updatedAt").innerText
+        };
+        localStorage.setItem(SCANNER_SAVE_KEY, JSON.stringify(state));
+    }
+
+    function restoreScannerState() {
+        const raw = localStorage.getItem(SCANNER_SAVE_KEY);
+        if (!raw) return;
+
+        try {
+            const state = JSON.parse(raw);
+
+            allResults = state.allResults || [];
+            failedSymbols = state.failedSymbols || [];
+
+            document.getElementById("symbolsInput").value = state.symbolsInput || "";
+            document.getElementById("capitalInput").value = state.capital || "10000";
+            document.getElementById("riskMode").value = state.riskMode || "amount";
+            document.getElementById("riskValue").value = state.riskValue || "500";
+            document.getElementById("qtyMode").value = state.qtyMode || "auto";
+            document.getElementById("manualQty").value = state.manualQty || "0";
+            document.getElementById("lotCount").value = state.lotCount || "1";
+            document.getElementById("updatedAt").innerText = state.updatedAt || "Restored";
+
+            updateSummary();
+            renderCards();
+
+            if (allResults.length) setStatus("Previous scanner results restored after refresh.");
+        } catch (e) {
+            console.log("Restore failed");
+        }
+    }
+
+    function passesFilter(item) {
+        const minScore = Number(document.getElementById("minScore").value || 0);
+        const proScore = Number(item.pro_score || 0);
+        const focus = String(item.setup_focus || "").toLowerCase();
+        const tradeCall = String(item.trade_call || "").toLowerCase();
+
+        if (proScore < minScore) return false;
+
+        if (activeFilter === "VALID") return item.setup_valid === true;
+        if (activeFilter === "NO_TRADE") return !item.setup_valid;
+        if (activeFilter === "BUY") return focus.includes("buy");
+        if (activeFilter === "SELL") return focus.includes("sell");
+        if (activeFilter === "ENTRY_ACTIVE") return tradeCall.includes("now") || tradeCall.includes("active");
+        if (activeFilter === "HIGH_PRIORITY") return ["VERY HIGH", "HIGH"].includes(item.ai_priority);
+        if (activeFilter === "LOW_RISK") return Number(item.final_risk_percent || 999) <= 2 && item.setup_valid;
+
+        return true;
+    }
+
+    function sortResults(list) {
+        const sortBy = document.getElementById("sortBy").value;
+        const out = [...list];
+
+        if (sortBy === "setup") {
+            out.sort((a, b) => Number(b.setup_valid === true) - Number(a.setup_valid === true));
+        }
+        if (sortBy === "pro_score") {
+            out.sort((a, b) => Number(b.pro_score || 0) - Number(a.pro_score || 0));
+        }
+        if (sortBy === "priority") {
+            const w = p => ({ "VERY HIGH": 5, "HIGH": 4, "MEDIUM": 3, "LOW": 2 }[p] || 1);
+            out.sort((a, b) => w(b.ai_priority) - w(a.ai_priority));
+        }
+        if (sortBy === "risk") {
+            out.sort((a, b) => Number(a.final_risk_percent || 999) - Number(b.final_risk_percent || 999));
+        }
+        if (sortBy === "qty") {
+            out.sort((a, b) => Number(b.final_quantity || 0) - Number(a.final_quantity || 0));
+        }
+        if (sortBy === "symbol") {
+            out.sort((a, b) => String(a.symbol).localeCompare(String(b.symbol)));
+        }
+        return out;
+    }
+
+    async function fetchStock(symbol, runId) {
+        const controller = new AbortController();
+        controllers.push(controller);
+
+        const timeout = setTimeout(() => controller.abort(), 25000);
+
+        try {
+            const capital = document.getElementById("capitalInput").value || "10000";
+            const riskMode = document.getElementById("riskMode").value || "amount";
+            const riskValue = document.getElementById("riskValue").value || "500";
+            const qtyMode = document.getElementById("qtyMode").value || "auto";
+            const manualQty = document.getElementById("manualQty").value || "0";
+            const lotCount = document.getElementById("lotCount").value || "1";
+
+            const url =
+                `/api/scanner-stock?symbol=${encodeURIComponent(symbol)}` +
+                `&capital=${encodeURIComponent(capital)}` +
+                `&risk_mode=${encodeURIComponent(riskMode)}` +
+                `&risk_value=${encodeURIComponent(riskValue)}` +
+                `&qty_mode=${encodeURIComponent(qtyMode)}` +
+                `&manual_qty=${encodeURIComponent(manualQty)}` +
+                `&lots=${encodeURIComponent(lotCount)}`;
+
+            const response = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeout);
+
+            if (runId !== scanRunId || !isScanning) return null;
+
+            const data = await response.json();
+
+            if (data.status !== "success") {
+                failedSymbols.push(symbol);
+                return null;
+            }
+
+            return data;
+
+        } catch (e) {
+            clearTimeout(timeout);
+            if (runId === scanRunId && isScanning) failedSymbols.push(symbol);
+            return null;
+        } finally {
+            controllers = controllers.filter(c => c !== controller);
+        }
+    }
+
+    async function startScanner(manual = false) {
+        if (isScanning) {
+            stopScanner();
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        const symbols = getSymbols();
+
+        if (!symbols.length) {
+            setStatus("Enter stocks or load a stock pack before scanning.");
+            return;
+        }
+
+        isScanning = true;
+        scanRunId++;
+
+        const currentRunId = scanRunId;
+
+        allResults = [];
+        failedSymbols = [];
+
+        document.getElementById("stopScanBtn").disabled = false;
+        renderPlaceholders(symbols);
+        updateSummary();
+        setProgress(0, symbols.length);
+        setStatus("Scanner running...");
+
+        let completed = 0;
+        let nextIndex = 0;
+        const parallel = Number(document.getElementById("parallelCount").value || 4);
+
+        async function worker() {
+            while (nextIndex < symbols.length && currentRunId === scanRunId && isScanning) {
+                const symbol = symbols[nextIndex++];
+                setStatus(`Scanning ${symbol}... ${completed}/${symbols.length} completed`);
+
+                const result = await fetchStock(symbol, currentRunId);
+
+                if (currentRunId !== scanRunId || !isScanning) return;
+
+                completed++;
+
+                if (result) allResults.push(result);
+
+                setProgress(completed, symbols.length);
+                updateSummary();
+                renderCards();
+                saveScannerState();
+            }
+        }
+
+        const workers = [];
+        for (let i = 0; i < parallel; i++) workers.push(worker());
+        await Promise.all(workers);
+
+        if (currentRunId === scanRunId && isScanning) {
+            isScanning = false;
+            document.getElementById("stopScanBtn").disabled = true;
+            setStatus(`Scanner completed. Loaded ${allResults.length}, failed ${failedSymbols.length}.`);
+            document.getElementById("updatedAt").innerText = "Updated: " + new Date().toLocaleTimeString();
+            saveScannerState();
+            restartAutoScan();
+        }
+    }
+
+    function stopScanner() {
+        scanRunId++;
+        isScanning = false;
+        controllers.forEach(c => { try { c.abort(); } catch(e) {} });
+        controllers = [];
+        document.getElementById("stopScanBtn").disabled = true;
+        setStatus(`Scanner stopped. Loaded ${allResults.length}, failed ${failedSymbols.length}.`);
+    }
+
+    function clearScanner() {
+        stopScanner();
+        allResults = [];
+        failedSymbols = [];
+        localStorage.removeItem(SCANNER_SAVE_KEY);
+        updateSummary();
+        setProgress(0, 1);
+        setStatus("Scanner cleared.");
+        document.getElementById("resultsGrid").innerHTML = `<div class="empty-card">Scanner is empty.</div>`;
+        document.getElementById("updatedAt").innerText = "Updated: -";
+    }
+
+    function restartAutoScan() {
+        if (autoTimer) clearTimeout(autoTimer);
+        const sec = Number(document.getElementById("autoRefreshSeconds").value || 0);
+        if (!sec || !getSymbols().length) return;
+        autoTimer = setTimeout(() => startScanner(false), sec * 1000);
+    }
+
+    function updateSummary() {
+        document.getElementById("scannedCount").innerText = allResults.length;
+        document.getElementById("validCount").innerText = allResults.filter(x => x.setup_valid).length;
+        document.getElementById("activeCount").innerText = allResults.filter(x => String(x.trade_call || "").toLowerCase().includes("now") || String(x.trade_call || "").toLowerCase().includes("active")).length;
+        document.getElementById("failedCount").innerText = failedSymbols.length;
+    }
+
+    function renderPlaceholders(symbols) {
+        const grid = document.getElementById("resultsGrid");
+        grid.innerHTML = "";
+
+        symbols.forEach(symbol => {
+            const card = document.createElement("div");
+            card.className = "result-card skeleton-card";
+            card.innerHTML = `
+                <div class="card-top">
+                    <div>
+                        <h3>${symbol}</h3>
+                        <p>Waiting to scan...</p>
+                    </div>
+                    <span class="grade wait-grade">WAITING</span>
+                </div>
+                <div class="loading-line"></div>
+                <div class="loading-line small"></div>
+                <div class="loading-line tiny"></div>
+            `;
+            grid.appendChild(card);
+        });
+    }
+
+    function renderCards() {
+        const grid = document.getElementById("resultsGrid");
+        let filtered = sortResults(allResults.filter(passesFilter));
+
+        if (!filtered.length && !isScanning) {
+            grid.innerHTML = `<div class="empty-card">No stocks matched this filter.</div>`;
+            return;
+        }
+
+        if (!filtered.length && isScanning) return;
+
+        grid.innerHTML = "";
+
+        filtered.forEach(item => {
+            const tags = item.ai_tags || item.big_trader_flags || [];
+            const warnings = item.ai_warnings || [];
+
+            const card = document.createElement("div");
+            card.className = "result-card";
+
+            card.innerHTML = `
+                <div class="card-top">
+                    <div>
+                        <h3>${safeText(item.symbol)}</h3>
+                        <p>${safeText(item.stock_name, "")}</p>
+                    </div>
+                    <span class="grade ${item.setup_valid ? "strong-grade" : "wait-grade"}">
+                        ${safeText(item.setup_focus, "NO TRADE")}
+                    </span>
+                </div>
+
+                <div class="setup-focus-box ${item.setup_valid ? "valid-setup" : "invalid-setup"}">
+                    <h4>${safeText(item.setup_focus, "NO TRADE")}</h4>
+                    <p>${safeText(item.final_ai_guidance, item.conflict_reason || "Wait for clean setup.")}</p>
+                </div>
+
+                <div class="trigger-box">
+                    <div>
+                        <p>Trigger</p>
+                        <h4>${safeText(item.trade_call)}</h4>
+                    </div>
+                    <div>
+                        <p>Action</p>
+                        <h4>${safeText(item.trigger_action)}</h4>
+                    </div>
+                    <div>
+                        <p>Exit Price</p>
+                        <h4>${money(item.exit_price)}</h4>
+                    </div>
+                </div>
+
+                <div class="signal-line">
+                    <span>${safeText(item.main_signal)}</span>
+                    <b>Pro ${safeText(item.pro_score, 0)}</b>
+                </div>
+
+                <div class="flag-row">${tags.map(x => `<span>${x}</span>`).join("")}</div>
+                <div class="warning-row">${warnings.map(x => `<span>${x}</span>`).join("")}</div>
+
+                <div class="metric-grid">
+                    <div><p>Price</p><h4>${money(item.price || item.current_price)}</h4></div>
+                    <div><p>RSI</p><h4>${safeText(item.rsi || item.latest_rsi)}</h4></div>
+                    <div><p>Divergence</p><h4>${safeText(item.divergence_type)}</h4></div>
+                    <div><p>Trend Bias</p><h4>${safeText(item.trend_bias)}</h4></div>
+                    <div><p>Volume</p><h4>${safeText(item.relative_volume)}x | ${safeText(item.volume_signal)}</h4></div>
+                    <div><p>Liquidity</p><h4>${safeText(item.liquidity)}</h4></div>
+                    <div><p>Support</p><h4>${money(item.support)}</h4></div>
+                    <div><p>Resistance</p><h4>${money(item.resistance)}</h4></div>
+                </div>
+
+                <div class="trade-row">
+                    <div><p>Entry Trigger</p><b>${money(item.final_entry)}</b></div>
+                    <div><p>Correct SL</p><b class="sell-text">${money(item.final_stop_loss)}</b></div>
+                    <div><p>Target 1</p><b class="buy-text">${money(item.final_target_1)}</b></div>
+                    <div><p>Target 2</p><b class="buy-text">${money(item.final_target_2)}</b></div>
+                </div>
+
+                <div class="position-box">
+                    <div class="position-head">
+                        <h4>Qty + Lot System</h4>
+                        <span>${safeText(item.qty_source, "Auto")}</span>
+                    </div>
+                    <div class="position-grid">
+                        <div><p>Lot Size</p><b>${safeText(item.lot_size, 1)} share</b></div>
+                        <div><p>Lots</p><b>${safeText(item.lots, 1)}</b></div>
+                        <div><p>Final Qty</p><b>${safeText(item.final_quantity, 0)}</b></div>
+                        <div><p>Capital Used</p><b>${money(item.final_capital_used)}</b></div>
+                        <div><p>Risk / Share</p><b>${money(item.final_risk_per_share)}</b></div>
+                        <div><p>Max Loss</p><b class="sell-text">${money(item.final_max_loss)}</b></div>
+                        <div><p>Risk %</p><b>${safeText(item.final_risk_percent, 0)}%</b></div>
+                        <div><p>T1 Profit</p><b class="buy-text">${money(item.final_t1_profit)}</b></div>
+                        <div><p>T2 Profit</p><b class="buy-text">${money(item.final_t2_profit)}</b></div>
+                    </div>
+                </div>
+
+                <div class="entry-plan-box"><b>Trigger Plan:</b> ${safeText(item.trigger_action)}</div>
+                <div class="exit-plan-box"><b>Exit Plan:</b> ${safeText(item.exit_action)}</div>
+
+                <div class="card-actions three">
+                    <a href="/chart-view?symbol=${item.symbol}&tf=15m" class="open-btn">Open Chart</a>
+                    <button onclick="saveScannerTrade('${item.symbol}')">Save Trade</button>
+                    <button onclick="copySignal('${item.symbol}', '${item.trade_call}', '${item.pro_score}')">Copy</button>
+                </div>
+            `;
+
+            grid.appendChild(card);
+        });
+    }
+
+    async function saveScannerTrade(symbol) {
+        const item = allResults.find(x => x.symbol === symbol);
+        if (!item) return alert("Signal not found.");
+
+        const res = await fetch("/api/save-paper-trade", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(item)
+        });
+
+        const data = await res.json();
+        alert(data.message || "Saved to Paper Trading.");
+    }
+
+    function copySignal(symbol, signal, score) {
+        const text = `${symbol} | ${signal} | Pro Score ${score}`;
+        navigator.clipboard.writeText(text);
+        alert("Copied: " + text);
+    }
+
+    setStatus("Scanner ready. Enter stocks and click Run Scanner.");
+    setProgress(0, 1);
+    restoreScannerState();
+</script>
+
+</body>
+</html>

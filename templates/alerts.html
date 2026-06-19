@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Alert Center Pro</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/css/alerts.css">
+</head>
+
+<body>
+
+<div class="app">
+
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-icon">AI</div>
+            <div>
+                <h1>AI Alert Center Pro</h1>
+                <p>Live price • RSI • Pro score • Target/SL tracking</p>
+            </div>
+        </div>
+
+        <div class="top-actions">
+            <span class="live-pill">
+                <span class="live-dot"></span>
+                LIVE ALERTS
+            </span>
+            <a href="/logout" class="logout">Logout</a>
+        </div>
+    </header>
+
+    <section class="hero-card">
+        <div>
+            <h2>Smart Alert Engine</h2>
+            <p>
+                Create live paper alerts for price, RSI and pro score. Alerts refresh automatically every second.
+            </p>
+        </div>
+
+        <div class="hero-actions">
+            <button onclick="checkAlerts()" class="primary-btn">Check Now</button>
+            <button onclick="clearPopup()" class="secondary-btn">Clear Popup</button>
+        </div>
+    </section>
+
+    <section id="popupBox" class="popup-box hidden">
+        <h3>Triggered Alerts</h3>
+        <div id="popupList"></div>
+    </section>
+
+    <section class="create-card">
+        <h3>Create New Alert</h3>
+
+        <div class="form-grid">
+            <div>
+                <label>Symbol</label>
+                <input id="symbolInput" placeholder="RELIANCE">
+            </div>
+
+            <div>
+                <label>Alert Type</label>
+                <select id="alertType">
+                    <option value="price">Price</option>
+                    <option value="rsi">RSI</option>
+                    <option value="score">Pro Score</option>
+                </select>
+            </div>
+
+            <div>
+                <label>Condition</label>
+                <select id="conditionType">
+                    <option value="above">Above</option>
+                    <option value="below">Below</option>
+                </select>
+            </div>
+
+            <div>
+                <label>Trigger Value</label>
+                <input id="triggerValue" type="number" step="0.01" placeholder="Example 2450">
+            </div>
+        </div>
+
+        <div class="message-box">
+            <label>Message</label>
+            <textarea id="messageInput" placeholder="Example: RELIANCE near target 1, check chart."></textarea>
+        </div>
+
+        <div class="form-actions">
+            <button onclick="createAlert()" class="primary-btn">Create Alert</button>
+        </div>
+    </section>
+
+    <section class="summary-grid">
+        <div class="summary-card">
+            <p>Total Alerts</p>
+            <h3 id="totalAlerts">0</h3>
+        </div>
+
+        <div class="summary-card blue">
+            <p>Active</p>
+            <h3 id="activeAlerts">0</h3>
+        </div>
+
+        <div class="summary-card green">
+            <p>Triggered</p>
+            <h3 id="triggeredAlerts">0</h3>
+        </div>
+
+        <div class="summary-card">
+            <p>Last Check</p>
+            <h3 id="lastCheck">-</h3>
+        </div>
+    </section>
+
+    <section id="alertsGrid" class="alerts-grid">
+        <div class="empty-card">Loading alerts...</div>
+    </section>
+
+</div>
+
+<nav class="bottom-nav">
+    <a href="/dashboard">Home</a>
+    <a href="/chart-view">Chart</a>
+    <a href="/divergence-scanner">Scanner</a>
+    <a href="/paper-trading">Trades</a>
+    <a href="/alerts" class="active">Alerts</a>
+    <a href="/settings">Settings</a>
+</nav>
+
+<script>
+    let alerts = [];
+    let autoTimer = null;
+
+    function money(v) {
+        if (v === null || v === undefined || v === "") return "-";
+        return "₹" + Number(v).toFixed(2);
+    }
+
+    function safe(v, fallback = "-") {
+        if (v === null || v === undefined || v === "") return fallback;
+        return v;
+    }
+
+    async function createAlert() {
+        const payload = {
+            symbol: document.getElementById("symbolInput").value.trim().toUpperCase(),
+            alert_type: document.getElementById("alertType").value,
+            condition_type: document.getElementById("conditionType").value,
+            trigger_value: document.getElementById("triggerValue").value,
+            message: document.getElementById("messageInput").value
+        };
+
+        if (!payload.symbol || !payload.trigger_value) {
+            alert("Symbol and trigger value required.");
+            return;
+        }
+
+        const res = await fetch("/api/create-alert", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+
+        alert(data.message || "Alert created.");
+
+        document.getElementById("symbolInput").value = "";
+        document.getElementById("triggerValue").value = "";
+        document.getElementById("messageInput").value = "";
+
+        loadAlerts();
+    }
+
+    async function loadAlerts() {
+        const res = await fetch("/api/alerts");
+        const data = await res.json();
+
+        if (data.status !== "success") return;
+
+        alerts = data.alerts || [];
+        updateSummary([]);
+        renderAlerts();
+    }
+
+    async function checkAlerts() {
+        const res = await fetch("/api/check-alerts");
+        const data = await res.json();
+
+        if (data.status !== "success") return;
+
+        alerts = data.alerts || [];
+        updateSummary(data.triggered || [], data.server_time);
+        renderAlerts();
+
+        if ((data.triggered || []).length) {
+            showPopup(data.triggered);
+        }
+    }
+
+    function updateSummary(triggered = [], serverTime = "-") {
+        document.getElementById("totalAlerts").innerText = alerts.length;
+        document.getElementById("activeAlerts").innerText = alerts.filter(x => Number(x.is_active) === 1).length;
+        document.getElementById("triggeredAlerts").innerText = alerts.reduce((s, x) => s + Number(x.triggered_count || 0), 0);
+        document.getElementById("lastCheck").innerText = serverTime || "-";
+    }
+
+    function showPopup(list) {
+        const box = document.getElementById("popupBox");
+        const popupList = document.getElementById("popupList");
+
+        popupList.innerHTML = "";
+
+        list.forEach(item => {
+            const row = document.createElement("div");
+            row.className = "popup-item";
+
+            row.innerHTML = `
+                <b>${item.symbol}</b>
+                <p>${safe(item.reason)}</p>
+                <small>${safe(item.message)}</small>
+            `;
+
+            popupList.appendChild(row);
+        });
+
+        box.classList.remove("hidden");
+    }
+
+    function clearPopup() {
+        document.getElementById("popupBox").classList.add("hidden");
+        document.getElementById("popupList").innerHTML = "";
+    }
+
+    function renderAlerts() {
+        const grid = document.getElementById("alertsGrid");
+
+        if (!alerts.length) {
+            grid.innerHTML = `<div class="empty-card">No alerts created yet.</div>`;
+            return;
+        }
+
+        grid.innerHTML = "";
+
+        alerts.forEach(a => {
+            const card = document.createElement("div");
+            card.className = "alert-card";
+
+            const activeText = Number(a.is_active) === 1 ? "ACTIVE" : "OFF";
+
+            card.innerHTML = `
+                <div class="alert-top">
+                    <div>
+                        <h3>${safe(a.symbol)}</h3>
+                        <p>${safe(a.alert_type).toUpperCase()} ${safe(a.condition_type).toUpperCase()} ${safe(a.trigger_value)}</p>
+                    </div>
+
+                    <span class="status ${Number(a.is_active) === 1 ? "active" : "off"}">${activeText}</span>
+                </div>
+
+                <div class="live-data">
+                    <div>
+                        <p>Last Price</p>
+                        <h4>${money(a.last_price)}</h4>
+                    </div>
+
+                    <div>
+                        <p>Last RSI</p>
+                        <h4>${safe(a.last_rsi)}</h4>
+                    </div>
+
+                    <div>
+                        <p>Triggered</p>
+                        <h4>${safe(a.triggered_count, 0)}</h4>
+                    </div>
+                </div>
+
+                <div class="status-box">
+                    ${safe(a.last_status, "Waiting")}
+                </div>
+
+                <div class="message-view">
+                    <b>Message:</b> ${safe(a.message, "No message.")}
+                </div>
+
+                <div class="alert-actions">
+                    <a href="/chart-view?symbol=${a.symbol}&tf=15m">Chart</a>
+                    <button onclick="toggleAlert(${a.id})">${Number(a.is_active) === 1 ? "Turn Off" : "Turn On"}</button>
+                    <button class="delete-btn" onclick="deleteAlert(${a.id})">Delete</button>
+                </div>
+            `;
+
+            grid.appendChild(card);
+        });
+    }
+
+    async function toggleAlert(id) {
+        const res = await fetch("/api/toggle-alert", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({id})
+        });
+
+        const data = await res.json();
+        alert(data.message || "Updated.");
+        loadAlerts();
+    }
+
+    async function deleteAlert(id) {
+        if (!confirm("Delete alert?")) return;
+
+        const res = await fetch("/api/delete-alert", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({id})
+        });
+
+        const data = await res.json();
+        alert(data.message || "Deleted.");
+        loadAlerts();
+    }
+
+    function startAuto() {
+        if (autoTimer) clearInterval(autoTimer);
+
+        autoTimer = setInterval(() => {
+            checkAlerts();
+        }, 1000);
+    }
+
+    loadAlerts();
+    checkAlerts();
+    startAuto();
+</script>
+
+</body>
+</html>

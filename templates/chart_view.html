@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chart View Ultra AI - Clean Decision</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+    <link rel="stylesheet" href="/static/css/chart_view.css">
+</head>
+<body>
+
+<div class="app">
+
+<header class="topbar">
+    <div class="brand">
+        <div class="brand-icon">AI</div>
+        <div>
+            <h1>Chart View Ultra AI</h1>
+            <p>Clear setup • RSI divergence • live price • correct trigger and SL</p>
+        </div>
+    </div>
+    <div class="top-actions">
+        <span class="mode-pill"><span class="live-dot"></span>LIVE PAPER</span>
+        <a href="/logout" class="logout">Logout</a>
+    </div>
+</header>
+
+<section class="command-center">
+    <div class="search-wrap">
+        <label>Search stock</label>
+        <div class="search-row">
+            <input id="symbolInput" placeholder="RELIANCE" value="RELIANCE" autocomplete="off">
+            <button onclick="loadUltraChart(true)">Analyze</button>
+        </div>
+        <div id="suggestionsBox" class="suggestions-box"></div>
+    </div>
+
+    <div class="tf-wrap">
+        <label>Main timeframe</label>
+        <div class="tf-row">
+            <button class="tf-btn" onclick="switchMainTF('5m', this)">5m</button>
+            <button class="tf-btn active" onclick="switchMainTF('15m', this)">15m</button>
+            <button class="tf-btn" onclick="switchMainTF('30m', this)">30m</button>
+        </div>
+    </div>
+
+    <div class="toggle-wrap">
+        <label>Controls</label>
+        <div class="toggle-row">
+            <button id="emaToggle" class="mini-toggle active" onclick="toggleIndicator('ema')">EMA</button>
+            <button id="vwapToggle" class="mini-toggle active" onclick="toggleIndicator('vwap')">VWAP</button>
+            <button id="volumeToggle" class="mini-toggle active" onclick="toggleIndicator('volume')">Volume</button>
+            <button id="autoToggle" class="mini-toggle active" onclick="toggleAutoRefresh()">Live</button>
+        </div>
+    </div>
+</section>
+
+<section class="mtf-strip">
+    <div class="mtf-card" onclick="quickTF('5m')"><p>5m RSI</p><h3 id="rsi5m">-</h3><span id="rsi5mText">Waiting</span></div>
+    <div class="mtf-card main" onclick="quickTF('15m')"><p>15m RSI</p><h3 id="rsi15m">-</h3><span id="rsi15mText">Waiting</span></div>
+    <div class="mtf-card" onclick="quickTF('30m')"><p>30m RSI</p><h3 id="rsi30m">-</h3><span id="rsi30mText">Waiting</span></div>
+    <div class="mtf-card ai-score"><p>AI Confluence</p><h3 id="aiConfluenceScore">0</h3><span id="aiConfluenceText">Waiting</span></div>
+</section>
+
+<section class="main-layout">
+
+<main class="chart-card">
+    <div class="chart-head">
+        <div>
+            <h2 id="chartTitle">RELIANCE</h2>
+            <p><span id="stockName">-</span><span>•</span><span id="tfText">15m</span><span>•</span><span id="updatedAt">Updated: -</span></p>
+        </div>
+        <div class="price-box">
+            <p>Current Price</p>
+            <h3 id="currentPrice">₹-</h3>
+        </div>
+    </div>
+
+    <div id="chartDecisionBox" class="chart-decision-box no-focus">
+        <h3 id="chartSetupFocus">Waiting...</h3>
+        <p id="chartAIGuidance">Load chart to see clear setup.</p>
+
+        <div class="chart-trigger-grid">
+            <div><p>Trigger</p><b id="chartTradeCall">-</b></div>
+            <div><p>Entry</p><b id="chartFinalEntry">-</b></div>
+            <div><p>Stop Loss</p><b id="chartFinalSL">-</b></div>
+            <div><p>Exit Rule</p><b id="chartExitRule">-</b></div>
+        </div>
+    </div>
+
+    <div id="mainChart"></div>
+
+    <div class="chart-footer">
+        <div class="legend-item candle">Candles</div>
+        <div class="legend-item rsi">RSI</div>
+        <div class="legend-item ema20">EMA 20</div>
+        <div class="legend-item ema50">EMA 50</div>
+        <div class="legend-item ema200">EMA 200</div>
+        <div class="legend-item vwap">VWAP</div>
+        <div class="legend-item volume">Volume</div>
+    </div>
+
+    <section class="mini-chart-grid">
+        <div class="mini-chart-card"><div class="mini-head"><b>5m</b><span>Entry momentum</span></div><div id="miniChart5m" class="mini-chart"></div></div>
+        <div class="mini-chart-card active"><div class="mini-head"><b>15m</b><span>Main setup</span></div><div id="miniChart15m" class="mini-chart"></div></div>
+        <div class="mini-chart-card"><div class="mini-head"><b>30m</b><span>Trend filter</span></div><div id="miniChart30m" class="mini-chart"></div></div>
+    </section>
+</main>
+
+<aside class="side-panel">
+    <section class="signal-card">
+        <div class="signal-top">
+            <div><p>AI Signal</p><h2 id="signalTitle">WAIT</h2></div>
+            <div class="score-ring"><span id="scoreText">0</span><small>Score</small></div>
+        </div>
+        <div class="grade-row"><span id="gradePill" class="pill neutral">WAIT</span><span id="directionPill" class="pill neutral">Neutral</span></div>
+    </section>
+
+    <section class="panel-card ai-cockpit">
+        <h3>AI Cockpit</h3>
+        <div class="cockpit-grid">
+            <div><p>Action</p><h4 id="aiAction">Waiting</h4></div>
+            <div><p>Priority</p><h4 id="aiPriority">Normal</h4></div>
+            <div><p>Urgency</p><h4 id="aiUrgency">Normal Watch</h4></div>
+            <div><p>Risk</p><h4 id="aiRisk">Check SL</h4></div>
+        </div>
+        <div class="ai-summary" id="aiSummary">Load a stock to generate AI analysis.</div>
+    </section>
+
+    <section class="panel-card">
+        <h3>Market Intelligence</h3>
+        <div class="info-grid">
+            <div><p>RSI</p><h4 id="rsiValue">-</h4></div>
+            <div><p>Divergence</p><h4 id="divergenceType">-</h4></div>
+            <div><p>RSI Zone</p><h4 id="rsiZone">-</h4></div>
+            <div><p>RSI 50</p><h4 id="rsi50Status">-</h4></div>
+            <div><p>Trend Bias</p><h4 id="trendBias">-</h4></div>
+            <div><p>Volume</p><h4 id="volumeStatus">-</h4></div>
+            <div><p>Liquidity</p><h4 id="liquidityStatus">-</h4></div>
+            <div><p>Failure Swing</p><h4 id="failureSwing">-</h4></div>
+        </div>
+    </section>
+
+    <section class="panel-card">
+        <h3>Final Trade Plan</h3>
+        <div class="trade-grid">
+            <div><p>Entry</p><h4 id="entryPrice">-</h4></div>
+            <div><p>Stop Loss</p><h4 id="stopLoss">-</h4></div>
+            <div><p>Target 1</p><h4 id="target1">-</h4></div>
+            <div><p>Target 2</p><h4 id="target2">-</h4></div>
+        </div>
+        <div class="entry-box" id="entryStatus">Wait for setup.</div>
+        <div class="exit-box" id="exitAdvice">No exit advice.</div>
+    </section>
+</aside>
+
+</section>
+</div>
+
+<nav class="bottom-nav">
+    <a href="/dashboard">Home</a>
+    <a href="/chart-view" class="active">Chart</a>
+    <a href="/divergence-scanner">Scanner</a>
+    <a href="/paper-trading">Trades</a>
+    <a href="/alerts">Alerts</a>
+</nav>
+
+<script>
+let mainChart=null, mainSeries={}, miniCharts={};
+let selectedTimeframe="15m";
+let tfData={"5m":null,"15m":null,"30m":null};
+let showEMA=true, showVWAP=true, showVolume=true;
+let activePriceLines=[];
+let autoRefresh=true;
+let livePriceTimer=null, fullRefreshTimer=null, liveTickBusy=false;
+let lastMainCandles=[];
+let currentController=null, requestId=0;
+const FRONT_CACHE={};
+const CACHE_MS=2000;
+const LIVE_TICK_MS=1000;
+const FULL_REFRESH_MS=10000;
+
+function createUltraChart(){
+    const container=document.getElementById("mainChart");
+    mainChart=LightweightCharts.createChart(container,{width:container.clientWidth,height:container.clientHeight,layout:{background:{color:"#ffffff"},textColor:"#334155"},grid:{vertLines:{color:"#eef2f7"},horzLines:{color:"#eef2f7"}},rightPriceScale:{borderColor:"#e5e7eb",scaleMargins:{top:.06,bottom:.36}},timeScale:{borderColor:"#e5e7eb",timeVisible:true,secondsVisible:false},crosshair:{mode:LightweightCharts.CrosshairMode.Normal}});
+    mainSeries.candles=mainChart.addCandlestickSeries({upColor:"#00a86b",downColor:"#e53935",borderUpColor:"#00a86b",borderDownColor:"#e53935",wickUpColor:"#00a86b",wickDownColor:"#e53935",priceScaleId:"right"});
+    mainSeries.ema20=mainChart.addLineSeries({color:"#2563eb",lineWidth:2,priceScaleId:"right"});
+    mainSeries.ema50=mainChart.addLineSeries({color:"#7c3aed",lineWidth:2,priceScaleId:"right"});
+    mainSeries.ema200=mainChart.addLineSeries({color:"#111827",lineWidth:1,priceScaleId:"right"});
+    mainSeries.vwap=mainChart.addLineSeries({color:"#f59e0b",lineWidth:2,priceScaleId:"right"});
+    mainSeries.divPrice=mainChart.addLineSeries({color:"#0f172a",lineWidth:3,priceScaleId:"right"});
+    mainSeries.volume=mainChart.addHistogramSeries({priceScaleId:"volume",priceFormat:{type:"volume"}});
+    mainChart.priceScale("volume").applyOptions({scaleMargins:{top:.83,bottom:0},borderVisible:false});
+    mainSeries.rsi=mainChart.addLineSeries({color:"#0f172a",lineWidth:2,priceScaleId:"rsi"});
+    mainSeries.rsiMove=mainChart.addLineSeries({color:"#2563eb",lineWidth:2,priceScaleId:"rsi"});
+    mainSeries.rsiDiv=mainChart.addLineSeries({color:"#dc2626",lineWidth:2,priceScaleId:"rsi"});
+    mainChart.priceScale("rsi").applyOptions({scaleMargins:{top:.70,bottom:.05},borderColor:"#e5e7eb"});
+    [70,50,30].forEach(p=>mainSeries.rsi.createPriceLine({price:p,color:p===70?"#e53935":p===30?"#00a86b":"#64748b",lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:"RSI "+p}));
+    window.addEventListener("resize",()=>{mainChart.applyOptions({width:container.clientWidth,height:container.clientHeight});Object.keys(miniCharts).forEach(tf=>{const el=document.getElementById("miniChart"+tf);if(miniCharts[tf]&&el)miniCharts[tf].chart.applyOptions({width:el.clientWidth,height:el.clientHeight});});});
+}
+
+function createMiniCharts(){createMini("5m","miniChart5m");createMini("15m","miniChart15m");createMini("30m","miniChart30m");}
+function createMini(tf,id){const container=document.getElementById(id);const chart=LightweightCharts.createChart(container,{width:container.clientWidth,height:container.clientHeight,layout:{background:{color:"#fff"},textColor:"#64748b"},grid:{vertLines:{color:"#f1f5f9"},horzLines:{color:"#f1f5f9"}},rightPriceScale:{visible:false},timeScale:{visible:false}});const candles=chart.addCandlestickSeries({upColor:"#00a86b",downColor:"#e53935",borderVisible:false,wickUpColor:"#00a86b",wickDownColor:"#e53935"});const rsi=chart.addLineSeries({color:"#2563eb",lineWidth:2,priceScaleId:"rsi"});chart.priceScale("rsi").applyOptions({scaleMargins:{top:.68,bottom:.05},visible:false});miniCharts[tf]={chart,candles,rsi};}
+
+async function loadUltraChart(forceAI=true){
+    const symbol=document.getElementById("symbolInput").value.trim().toUpperCase();
+    if(!symbol)return alert("Enter stock symbol");
+    requestId++;
+    const localRequestId=requestId;
+    if(currentController)currentController.abort();
+    currentController=new AbortController();
+    document.getElementById("chartTitle").innerText=symbol;
+    document.getElementById("updatedAt").innerText="Loading 5m, 15m, 30m...";
+    const timeframes=["5m","15m","30m"];
+    const results=await Promise.allSettled(timeframes.map(tf=>fetchTF(symbol,tf,currentController.signal)));
+    if(localRequestId!==requestId)return;
+    results.forEach((res,i)=>{tfData[timeframes[i]]=res.status==="fulfilled"&&res.value&&res.value.status==="success"?res.value:null;});
+    const mainData=tfData[selectedTimeframe]||tfData["15m"]||tfData["5m"]||tfData["30m"];
+    if(!mainData){document.getElementById("updatedAt").innerText="No data found.";return;}
+    renderMainChart(mainData);
+    renderAllMiniCharts();
+    updatePanel(mainData);
+    updateRSIMovementEngine();
+    buildUltraLocalAI();
+    document.getElementById("updatedAt").innerText="Updated: "+(mainData.server_time||new Date().toLocaleTimeString());
+    if(autoRefresh)startLivePriceEngine();
+}
+
+async function fetchTF(symbol,tf,signal){
+    const key=symbol+"_"+tf;
+    const cached=FRONT_CACHE[key];
+    if(cached&&Date.now()-cached.time<CACHE_MS)return cached.data;
+    const response=await fetch(`/api/analyze-stock?symbol=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}`,{signal});
+    const data=await response.json();
+    FRONT_CACHE[key]={time:Date.now(),data};
+    return data;
+}
+
+function renderMainChart(data){
+    const candles=data.candles||[];
+    if(!candles.length)return;
+    const oldRange=mainChart.timeScale().getVisibleLogicalRange();
+    lastMainCandles=candles.map(c=>({time:Number(c.time),open:Number(c.open),high:Number(c.high),low:Number(c.low),close:Number(c.close),volume:Number(c.volume||0),rsi:Number(c.rsi||0)}));
+    rebuildMainChartFromLocalCandles();
+    drawDivergence(data);
+    drawTradeLines(data);
+    if(oldRange)mainChart.timeScale().setVisibleLogicalRange(oldRange);else mainChart.timeScale().fitContent();
+}
+
+function rebuildMainChartFromLocalCandles(){
+    mainSeries.candles.setData(lastMainCandles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
+    mainSeries.volume.setData(showVolume?lastMainCandles.map(c=>({time:c.time,value:Number(c.volume||0),color:c.close>=c.open?"rgba(0,168,107,0.35)":"rgba(229,57,53,0.35)"})):[]);
+    mainSeries.ema20.setData(showEMA?calculateEMA(lastMainCandles,20):[]);
+    mainSeries.ema50.setData(showEMA?calculateEMA(lastMainCandles,50):[]);
+    mainSeries.ema200.setData(showEMA?calculateEMA(lastMainCandles,200):[]);
+    mainSeries.vwap.setData(showVWAP?calculateVWAP(lastMainCandles):[]);
+    lastMainCandles=calculateClientRSI(lastMainCandles);
+    mainSeries.rsi.setData(getRSIData(lastMainCandles));
+    mainSeries.rsiMove.setData(getRSIMoveLine(lastMainCandles));
+}
+
+function renderAllMiniCharts(){["5m","15m","30m"].forEach(tf=>{const data=tfData[tf],obj=miniCharts[tf];if(!data||!obj||!data.candles)return;obj.candles.setData(data.candles.map(c=>({time:Number(c.time),open:Number(c.open),high:Number(c.high),low:Number(c.low),close:Number(c.close)})));obj.rsi.setData(getRSIData(data.candles));obj.chart.timeScale().fitContent();});}
+
+function drawDivergence(data){
+    mainSeries.divPrice.setData([]);mainSeries.rsiDiv.setData([]);mainSeries.candles.setMarkers([]);
+    const div=data.divergence||{},p1=div.point1,p2=div.point2;
+    if(!p1||!p2||div.direction==="neutral")return;
+    mainSeries.divPrice.setData([{time:Number(p1.time),value:Number(p1.price)},{time:Number(p2.time),value:Number(p2.price)}]);
+    mainSeries.rsiDiv.setData([{time:Number(p1.time),value:Number(p1.rsi)},{time:Number(p2.time),value:Number(p2.rsi)}]);
+    const isBullish=div.direction==="bullish";
+    mainSeries.candles.setMarkers([{time:Number(p1.time),position:isBullish?"belowBar":"aboveBar",color:isBullish?"#00a86b":"#e53935",shape:isBullish?"arrowUp":"arrowDown",text:"D1"},{time:Number(p2.time),position:isBullish?"belowBar":"aboveBar",color:isBullish?"#00a86b":"#e53935",shape:isBullish?"arrowUp":"arrowDown",text:"D2"}]);
+}
+
+function clearPriceLines(){activePriceLines.forEach(line=>{try{mainSeries.candles.removePriceLine(line)}catch(e){}});activePriceLines=[];}
+function addPriceLine(price,color,title){if(!price)return;activePriceLines.push(mainSeries.candles.createPriceLine({price:Number(price),color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title}));}
+function drawTradeLines(data){clearPriceLines();addPriceLine(data.final_entry||data.entry,"#2563eb","Entry");addPriceLine(data.final_stop_loss||data.stop_loss,"#e53935","SL");addPriceLine(data.final_target_1||data.targets?.target_1,"#00a86b","T1");addPriceLine(data.final_target_2||data.targets?.target_2,"#00a86b","T2");}
+
+function updatePanel(data){
+    const advanced=data.advanced||{},market=data.market_context||advanced.market_context||{},targets=data.targets||{};
+    document.getElementById("chartTitle").innerText=data.symbol||"-";
+    document.getElementById("stockName").innerText=data.stock_name||"-";
+    document.getElementById("tfText").innerText=selectedTimeframe;
+    document.getElementById("currentPrice").innerText=money(data.current_price);
+    document.getElementById("signalTitle").innerText=data.trade_call||advanced.main_signal||"WAIT";
+    document.getElementById("scoreText").innerText=advanced.pro_score||data.pro_score||advanced.score||0;
+    document.getElementById("gradePill").innerText=data.setup_focus||advanced.pro_grade||"WAIT";
+    document.getElementById("directionPill").innerText=data.final_direction||advanced.direction||"neutral";
+    updatePill("gradePill",data.setup_focus||"WAIT");updatePill("directionPill",data.final_direction||"neutral");
+    document.getElementById("rsiValue").innerText=safe(data.latest_rsi);
+    document.getElementById("divergenceType").innerText=advanced.divergence_type||data.divergence_type||"-";
+    document.getElementById("rsiZone").innerText=advanced.rsi_zone||data.rsi_zone||"-";
+    document.getElementById("rsi50Status").innerText=advanced.rsi_50_status||data.rsi_50_status||"-";
+    document.getElementById("failureSwing").innerText=advanced.failure_swing||data.failure_swing||"-";
+    document.getElementById("trendBias").innerText=market.trend_bias||data.trend_bias||"-";
+    document.getElementById("volumeStatus").innerText=`${market.relative_volume||data.relative_volume||"-"}x | ${market.volume_signal||data.volume_signal||"-"}`;
+    document.getElementById("liquidityStatus").innerText=market.liquidity||data.liquidity||"-";
+    document.getElementById("entryPrice").innerText=money(data.final_entry||data.entry);
+    document.getElementById("stopLoss").innerText=money(data.final_stop_loss||data.stop_loss);
+    document.getElementById("target1").innerText=money(data.final_target_1||targets.target_1);
+    document.getElementById("target2").innerText=money(data.final_target_2||targets.target_2);
+    document.getElementById("entryStatus").innerText=data.trigger_action||advanced.entry_status||"Wait for setup.";
+    document.getElementById("exitAdvice").innerText=data.exit_action||data.exit_advice||"No exit advice.";
+    applyCleanChartDecision(data);
+}
+
+function applyCleanChartDecision(data){
+    const d=data.clean_decision||data;
+    document.getElementById("chartSetupFocus").innerText=d.setup_focus||"NO TRADE";
+    document.getElementById("chartAIGuidance").innerText=d.final_ai_guidance||d.ai_guidance||"Wait for clean setup.";
+    document.getElementById("chartTradeCall").innerText=d.trade_call||"-";
+    document.getElementById("chartFinalEntry").innerText=money(d.final_entry);
+    document.getElementById("chartFinalSL").innerText=money(d.final_stop_loss);
+    document.getElementById("chartExitRule").innerText=d.exit_action||"-";
+    const box=document.getElementById("chartDecisionBox");
+    box.classList.remove("buy-focus","sell-focus","no-focus");
+    const focus=String(d.setup_focus||"").toLowerCase();
+    if(focus.includes("buy"))box.classList.add("buy-focus");else if(focus.includes("sell"))box.classList.add("sell-focus");else box.classList.add("no-focus");
+}
+
+function updateRSIMovementEngine(){
+    const r5=getLatestRSI(tfData["5m"]),r15=getLatestRSI(tfData["15m"]),r30=getLatestRSI(tfData["30m"]);
+    const s5=getSlopeLabel(tfData["5m"]),s15=getSlopeLabel(tfData["15m"]),s30=getSlopeLabel(tfData["30m"]);
+    document.getElementById("rsi5m").innerText=safe(r5);document.getElementById("rsi15m").innerText=safe(r15);document.getElementById("rsi30m").innerText=safe(r30);
+    document.getElementById("rsi5mText").innerText=s5.label;document.getElementById("rsi15mText").innerText=s15.label;document.getElementById("rsi30mText").innerText=s30.label;
+    let score=0;if(s5.direction==="positive")score+=20;if(s15.direction==="positive")score+=25;if(s30.direction==="positive")score+=20;if(r5>50)score+=10;if(r15>50)score+=15;if(r30>50)score+=10;score=Math.min(100,score);
+    document.getElementById("aiConfluenceScore").innerText=score;
+    document.getElementById("aiConfluenceText").innerText=score>=80?"Strong RSI alignment":score>=60?"Good RSI alignment":score>=40?"Mixed RSI movement":"Weak alignment";
+}
+
+function buildUltraLocalAI(){
+    const data=tfData[selectedTimeframe]||tfData["15m"];if(!data)return;
+    const score=Number(document.getElementById("aiConfluenceScore").innerText||0);
+    document.getElementById("aiAction").innerText=data.trade_call||"Wait";
+    document.getElementById("aiPriority").innerText=score>=80?"High":score>=60?"Medium":"Low";
+    document.getElementById("aiUrgency").innerText=data.trigger_action||"Wait";
+    document.getElementById("aiRisk").innerText=data.final_risk_percent?`${data.final_risk_percent}% risk`:"Check SL";
+    document.getElementById("aiSummary").innerText=data.final_ai_guidance||"AI is waiting for clean setup.";
+}
+
+function switchMainTF(tf,btn){selectedTimeframe=tf;document.querySelectorAll(".tf-btn").forEach(x=>x.classList.remove("active"));btn.classList.add("active");quickTF(tf);}
+function quickTF(tf){selectedTimeframe=tf;document.getElementById("tfText").innerText=tf;document.querySelectorAll(".tf-btn").forEach(btn=>{btn.classList.remove("active");if(btn.innerText.trim().toLowerCase()===tf)btn.classList.add("active");});const data=tfData[tf];if(data){renderMainChart(data);updatePanel(data);buildUltraLocalAI();}}
+function getLatestRSI(data){if(!data||!data.candles)return null;const valid=data.candles.filter(c=>c.rsi&&Number(c.rsi)>0);return valid.length?Number(valid[valid.length-1].rsi):null;}
+function getSlopeLabel(data){if(!data||!data.candles)return{label:"No data",value:0,direction:"flat"};const valid=data.candles.filter(c=>c.rsi&&Number(c.rsi)>0);if(valid.length<6)return{label:"Not enough RSI",value:0,direction:"flat"};const diff=Number((Number(valid[valid.length-1].rsi)-Number(valid[valid.length-6].rsi)).toFixed(2));if(diff>2)return{label:"Positive",value:diff,direction:"positive"};if(diff<-2)return{label:"Negative",value:diff,direction:"negative"};return{label:"Flat",value:diff,direction:"flat"};}
+function getRSIData(candles){return candles.filter(c=>c.rsi&&Number(c.rsi)>0).map(c=>({time:Number(c.time),value:Number(c.rsi)}));}
+function getRSIMoveLine(candles){const valid=getRSIData(candles);return valid.length<8?valid:valid.slice(-35);}
+function calculateEMA(candles,period){const k=2/(period+1);let ema=null;const result=[];candles.forEach((c,i)=>{const close=Number(c.close);ema=ema===null?close:close*k+ema*(1-k);if(i>=period)result.push({time:Number(c.time),value:Number(ema.toFixed(2))});});return result;}
+function calculateVWAP(candles){let pv=0,volsum=0;return candles.map(c=>{const typical=(Number(c.high)+Number(c.low)+Number(c.close))/3;const vol=Number(c.volume||1);pv+=typical*vol;volsum+=vol;return{time:Number(c.time),value:Number((pv/volsum).toFixed(2))};});}
+function calculateClientRSI(candles,period=14){if(!candles||candles.length<period+2)return candles;const closes=candles.map(c=>Number(c.close));const result=candles.map(c=>({...c}));let gains=[],losses=[];for(let i=1;i<=period;i++){const diff=closes[i]-closes[i-1];gains.push(Math.max(diff,0));losses.push(Math.max(-diff,0));}let avgGain=gains.reduce((a,b)=>a+b,0)/period,avgLoss=losses.reduce((a,b)=>a+b,0)/period;for(let i=period;i<result.length;i++){if(i>period){const diff=closes[i]-closes[i-1];avgGain=((avgGain*(period-1))+Math.max(diff,0))/period;avgLoss=((avgLoss*(period-1))+Math.max(-diff,0))/period;}let rsi=50;if(avgLoss===0&&avgGain>0)rsi=100;else if(avgGain===0&&avgLoss>0)rsi=0;else if(avgLoss!==0){const rs=avgGain/avgLoss;rsi=100-(100/(1+rs));}result[i].rsi=Number(rsi.toFixed(2));}return result;}
+
+function toggleIndicator(type){if(type==="ema"){showEMA=!showEMA;document.getElementById("emaToggle").classList.toggle("active",showEMA)}if(type==="vwap"){showVWAP=!showVWAP;document.getElementById("vwapToggle").classList.toggle("active",showVWAP)}if(type==="volume"){showVolume=!showVolume;document.getElementById("volumeToggle").classList.toggle("active",showVolume)}const data=tfData[selectedTimeframe];if(data)renderMainChart(data);}
+function toggleAutoRefresh(){autoRefresh=!autoRefresh;document.getElementById("autoToggle").classList.toggle("active",autoRefresh);if(autoRefresh)startLivePriceEngine();else stopLivePriceEngine();}
+function startLivePriceEngine(){stopLivePriceEngine();fetchLivePriceTick();livePriceTimer=setInterval(fetchLivePriceTick,LIVE_TICK_MS);fullRefreshTimer=setInterval(()=>loadUltraChart(false),FULL_REFRESH_MS);}
+function stopLivePriceEngine(){if(livePriceTimer)clearInterval(livePriceTimer);if(fullRefreshTimer)clearInterval(fullRefreshTimer);livePriceTimer=null;fullRefreshTimer=null;}
+async function fetchLivePriceTick(){if(liveTickBusy)return;const symbol=document.getElementById("symbolInput").value.trim().toUpperCase();if(!symbol||!lastMainCandles.length)return;liveTickBusy=true;try{const res=await fetch(`/api/live-price?symbol=${encodeURIComponent(symbol)}`);const data=await res.json();if(data.status==="success")patchLivePrice(data.price,data.server_time);}catch(e){}liveTickBusy=false;}
+function patchLivePrice(price,serverTime){price=Number(price);if(!price||!lastMainCandles.length)return;const last=lastMainCandles[lastMainCandles.length-1],old=Number(last.close);last.close=price;last.high=Math.max(Number(last.high),price);last.low=Math.min(Number(last.low),price);lastMainCandles[lastMainCandles.length-1]=last;rebuildMainChartFromLocalCandles();document.getElementById("currentPrice").innerText=money(price);const box=document.querySelector(".price-box");if(box){box.classList.remove("live-up","live-down");if(price>old)box.classList.add("live-up");else if(price<old)box.classList.add("live-down");}const lastRsi=lastMainCandles[lastMainCandles.length-1].rsi;document.getElementById("rsiValue").innerText=safe(lastRsi);document.getElementById("updatedAt").innerText="Live: "+serverTime;if(tfData[selectedTimeframe]){tfData[selectedTimeframe].current_price=price;tfData[selectedTimeframe].latest_rsi=lastRsi;tfData[selectedTimeframe].candles=lastMainCandles;}updateRSIMovementEngine();buildUltraLocalAI();}
+function updatePill(id,value){const el=document.getElementById(id),text=String(value).toLowerCase();el.className="pill neutral";if(text.includes("buy")||text.includes("bull")||text.includes("clear"))el.className="pill bullish";if(text.includes("sell")||text.includes("bear")||text.includes("exit"))el.className="pill bearish";if(text.includes("wait")||text.includes("no")||text.includes("risk"))el.className="pill warning";}
+async function searchStocks(){const q=document.getElementById("symbolInput").value.trim();if(!q){document.getElementById("suggestionsBox").style.display="none";return}try{const response=await fetch(`/api/stocks?q=${encodeURIComponent(q)}`);const data=await response.json();if(data.status!=="success")return;const box=document.getElementById("suggestionsBox");box.innerHTML="";data.stocks.slice(0,8).forEach(stock=>{const item=document.createElement("div");item.innerHTML=`<b>${stock.symbol}</b><span>${stock.name}</span>`;item.onclick=()=>{document.getElementById("symbolInput").value=stock.symbol;box.style.display="none";loadUltraChart(true);};box.appendChild(item);});box.style.display=data.stocks.length?"block":"none";}catch(e){}}
+function applyUrlParams(){const p=new URLSearchParams(window.location.search);const s=p.get("symbol"),tf=p.get("tf");if(s)document.getElementById("symbolInput").value=s.toUpperCase();if(tf&&["5m","15m","30m"].includes(tf)){selectedTimeframe=tf;document.querySelectorAll(".tf-btn").forEach(btn=>{btn.classList.remove("active");if(btn.innerText.trim().toLowerCase()===tf)btn.classList.add("active")});document.getElementById("tfText").innerText=tf;}}
+function money(v){if(v===null||v===undefined||v===""||Number(v)===0)return"-";return"₹"+Number(v).toFixed(2);}
+function safe(v){return(v===null||v===undefined||v==="")?"-":v;}
+
+document.getElementById("symbolInput").addEventListener("input",searchStocks);
+document.getElementById("symbolInput").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();document.getElementById("suggestionsBox").style.display="none";loadUltraChart(true);}});
+createUltraChart();createMiniCharts();applyUrlParams();loadUltraChart(true);
+</script>
+</body>
+</html>

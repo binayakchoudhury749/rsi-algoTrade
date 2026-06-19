@@ -1,0 +1,20 @@
+const NSE_STOCKS = [
+    { symbol: "RELIANCE", name: "Reliance Industries Ltd" },
+    { symbol: "TCS", name: "Tata Consultancy Services Ltd" },
+    { symbol: "INFY", name: "Infosys Ltd" },
+    { symbol: "HDFCBANK", name: "HDFC Bank Ltd" },
+    { symbol: "ICICIBANK", name: "ICICI Bank Ltd" },
+    { symbol: "SBIN", name: "State Bank of India" },
+    { symbol: "TATAMOTORS", name: "Tata Motors Ltd" },
+    { symbol: "TATASTEEL", name: "Tata Steel Ltd" },
+    { symbol: "ZOMATO", name: "Zomato Ltd" },
+    { symbol: "IREDA", name: "Indian Renewable Energy Development Agency" },
+    { symbol: "ADANIENT", name: "Adani Enterprises Ltd" },
+    { symbol: "ADANIPORTS", name: "Adani Ports Ltd" },
+    { symbol: "BAJFINANCE", name: "Bajaj Finance Ltd" },
+    { symbol: "AXISBANK", name: "Axis Bank Ltd" },
+    { symbol: "LT", name: "Larsen & Toubro Ltd" },
+    { symbol: "MARUTI", name: "Maruti Suzuki India Ltd" },
+    { symbol: "SUNPHARMA", name: "Sun Pharmaceutical Industries Ltd" },
+    { symbol: "BHARTIARTL", name: "Bharti Airtel Ltd" }
+];
